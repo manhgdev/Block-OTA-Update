@@ -1,0 +1,28 @@
+#!/system/bin/sh
+MODDIR="/data/adb/modules/block_ota_ultimate"
+. "$MODDIR/common.sh"
+case "$1" in
+  status|"") status_report;;
+  block) rm -f "$DISABLE_FILE"; block_all; echo "Block applied.";;
+  restore|enable) touch "$ENABLE_FILE"; restore_all; echo "Restore applied.";;
+  pause|disable) touch "$DISABLE_FILE"; echo "Paused.";;
+  resume) rm -f "$DISABLE_FILE"; block_all; echo "Resumed.";;
+  aggressive-on) touch "$AGGRESSIVE_FILE"; block_all; echo "Aggressive mode ON.";;
+  aggressive-off) rm -f "$AGGRESSIVE_FILE"; block_all; echo "Aggressive mode OFF.";;
+  pixel-strict-on) touch "$PIXEL_STRICT_FILE"; block_all; echo "Pixel strict mode ON.";;
+  pixel-strict-off) rm -f "$PIXEL_STRICT_FILE"; block_all; echo "Pixel strict mode OFF.";;
+  watchdog-on) touch "$WATCHDOG_FILE"; echo "Watchdog ON.";;
+  watchdog-off) rm -f "$WATCHDOG_FILE"; echo "Watchdog OFF.";;
+  smart-block-on) touch "$SMART_BLOCK_FILE"; scan_smart >/dev/null; block_all; echo "Smart block ON.";;
+  smart-block-off) rm -f "$SMART_BLOCK_FILE"; echo "Smart block OFF.";;
+  dryrun-on) touch "$DRYRUN_FILE"; echo "Dry-run ON.";;
+  dryrun-off) rm -f "$DRYRUN_FILE"; echo "Dry-run OFF.";;
+  scan) scan_ota_packages;;
+  scan-smart) scan_smart;;
+  health) health_check; echo "Health check done. See $LOG";;
+  json) write_json_report; cat "$REPORT_JSON";;
+  report) write_html_report;;
+  github-help) github_help;;
+  log) tail -n 120 "$LOG" 2>/dev/null;;
+  *) echo "Usage: blockota {status|block|restore|pause|resume|aggressive-on|aggressive-off|pixel-strict-on|pixel-strict-off|watchdog-on|watchdog-off|smart-block-on|smart-block-off|dryrun-on|dryrun-off|scan|scan-smart|health|json|report|github-help|log}";;
+esac

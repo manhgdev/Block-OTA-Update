@@ -1,6 +1,6 @@
 # Changelog
 
-## v6.0
+## v2
 - Added GitHub update channel template.
 - Added `github-help`.
 - Added smart scan and smart block.

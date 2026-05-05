@@ -1,0 +1,21 @@
+# Local backups
+*.bk
+*.bk[0-9]
+
+# Build artifacts
+*.zip
+
+# macOS metadata
+.DS_Store
+._*
+__MACOSX/
+
+# Editor and local environment files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Runtime output
+*.log

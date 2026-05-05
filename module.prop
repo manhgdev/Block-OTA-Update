@@ -1,7 +1,7 @@
-id=block_ota_ultimate
-name=Block OTA Ultimate Auto Detect
-version=6.0
-versionCode=6
-author=Jayden/ChatGPT
-description=Universal Android OTA blocker v6 with GitHub update channel, smart scan, watchdog, Pixel strict, HTML/JSON report.
-updateJson=https://raw.githubusercontent.com/manhgdev/Block-OTA-Ultimate/main/update.json
+id=block_ota_update
+name=Block OTA Update Auto Detect
+version=v3
+versionCode=3
+author=manhgdev
+description=Block OTA updates via hosts + GMS component disable. No download, no check.
+updateJson=https://raw.githubusercontent.com/manhgdev/Block-OTA-Update/main/update.json

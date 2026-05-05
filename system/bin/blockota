@@ -1,5 +1,5 @@
 #!/system/bin/sh
-MODDIR="/data/adb/modules/block_ota_ultimate"
+MODDIR="/data/adb/modules/block_ota_update"
 . "$MODDIR/common.sh"
 case "$1" in
   status|"") status_report;;

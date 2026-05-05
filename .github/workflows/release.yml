@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: release_vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="$(ruby -rjson -e 'puts JSON.parse(File.read("update.json")).fetch("version")')"
+          fi
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+$ ]]; then
+            echo "version must look like v1, v2, v3"
+            exit 1
+          fi
+
+          VERSION_CODE="${VERSION#v}"
+          ZIP_NAME="Block-OTA-Update-${VERSION}.zip"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release_vars.outputs.version }}"
+          VERSION_CODE="${{ steps.release_vars.outputs.version_code }}"
+          ZIP_NAME="${{ steps.release_vars.outputs.zip_name }}"
+          REPO="manhgdev/Block-OTA-Update"
+          ZIP_URL="https://github.com/${REPO}/releases/latest/download/Block-OTA-Update.zip"
+          CHANGELOG_URL="https://raw.githubusercontent.com/${REPO}/main/CHANGELOG.md"
+          UPDATE_JSON_URL="https://raw.githubusercontent.com/${REPO}/main/update.json"
+
+          sed -i -E "s/^version=.*/version=${VERSION}/" module.prop
+          sed -i -E "s/^versionCode=.*/versionCode=${VERSION_CODE}/" module.prop
+          sed -i -E "s#^updateJson=.*#updateJson=${UPDATE_JSON_URL}#" module.prop
+          sed -i -E "s/blocker v[0-9]+/blocker ${VERSION}/" module.prop
+
+          ruby -rjson -e '
+            version = ENV.fetch("VERSION")
+            version_code = Integer(ENV.fetch("VERSION_CODE"))
+            zip_url = ENV.fetch("ZIP_URL")
+            changelog_url = ENV.fetch("CHANGELOG_URL")
+            ["update.json"].each do |path|
+              data = JSON.parse(File.read(path))
+              data["version"] = version
+              data["versionCode"] = version_code
+              data["zipUrl"] = zip_url
+              data["changelog"] = changelog_url
+              File.write(path, JSON.pretty_generate(data) + "\n")
+            end
+          '
+
+          sed -i -E "s/Block OTA Update v[0-9]+/Block OTA Update/g" README.md customize.sh common.sh
+          sed -i -E "s/## v[0-9]+/## ${VERSION}/" CHANGELOG.md
+          sed -i -E "s/Release tag: v[0-9]+/Release tag: ${VERSION}/" common.sh
+          sed -i -E "s/Block-OTA-Update-v[0-9]+\\.zip/${ZIP_NAME}/g" common.sh
+
+        env:
+          VERSION: ${{ steps.release_vars.outputs.version }}
+          VERSION_CODE: ${{ steps.release_vars.outputs.version_code }}
+          ZIP_URL: https://github.com/manhgdev/Block-OTA-Update/releases/latest/download/Block-OTA-Update.zip
+          CHANGELOG_URL: https://raw.githubusercontent.com/manhgdev/Block-OTA-Update/main/CHANGELOG.md
+
+      - name: Validate files
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -rjson -e 'JSON.parse(File.read("update.json"))'
+          for file in *.sh system/bin/blockota; do
+            sh -n "$file"
+          done
+
+      - name: Build module ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_NAME="${{ steps.release_vars.outputs.zip_name }}"
+          rm -f "$ZIP_NAME"
+          zip -r -X "$ZIP_NAME" . \
+            -x '.git/*' '.github/*' '.DS_Store' '__MACOSX/*' '*/.DS_Store' '*.bk' '*.bk1' '*.bk2'
+          unzip -t "$ZIP_NAME"
+          cp "$ZIP_NAME" Block-OTA-Update.zip
+
+      - name: Commit metadata
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release_vars.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add module.prop update.json README.md CHANGELOG.md customize.sh common.sh
+          if git diff --cached --quiet; then
+            echo "No metadata changes to commit"
+          else
+            git commit -m "Release ${VERSION}"
+            git push
+          fi
+
+      - name: Create or update tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release_vars.outputs.version }}"
+          git tag -f "$VERSION"
+          git push -f origin "$VERSION"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_vars.outputs.version }}
+          name: Block OTA Update ${{ steps.release_vars.outputs.version }}
+          body_path: CHANGELOG.md
+          files: |
+            ${{ steps.release_vars.outputs.zip_name }}
+            Block-OTA-Update.zip
+          make_latest: true

@@ -98,12 +98,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_NAME="${{ steps.release_vars.outputs.zip_name }}"
-          rm -f "$ZIP_NAME"
-          zip -r -X "$ZIP_NAME" . \
+          rm -f Block-OTA-Update.zip
+          zip -r -X Block-OTA-Update.zip . \
             -x '.git/*' '.github/*' '.DS_Store' '__MACOSX/*' '*/.DS_Store' '*.bk' '*.bk1' '*.bk2'
-          unzip -t "$ZIP_NAME"
-          cp "$ZIP_NAME" Block-OTA-Update.zip
+          unzip -t Block-OTA-Update.zip
 
       - name: Commit metadata
         if: github.event_name == 'workflow_dispatch'
@@ -137,6 +135,5 @@ jobs:
           name: Block OTA Update ${{ steps.release_vars.outputs.version }}
           body_path: CHANGELOG.md
           files: |
-            ${{ steps.release_vars.outputs.zip_name }}
             Block-OTA-Update.zip
           make_latest: true

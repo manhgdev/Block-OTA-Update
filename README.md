@@ -14,6 +14,10 @@ On every Google Pixel, the module runs its safe OTA rule set after boot. It
 blocks the known GMS system-update entry points and the installed system-update
 package, so both background and manual OTA flows are blocked.
 
+It also resolves Android's SYSTEM_UPDATE_SETTINGS action at boot. Only a
+dedicated SystemUpdate component returned by that action is disabled; a generic
+Settings component is logged and skipped.
+
 Missing components are skipped and written to the log. The module never guesses
 or disables a package merely because its name contains "update".
 
@@ -30,6 +34,7 @@ su -c blockota pause
 su -c blockota resume
 su -c blockota scan
 su -c blockota scan-smart
+su -c blockota resolve
 su -c blockota smart-block-on
 su -c blockota smart-block-off
 su -c blockota report
@@ -62,15 +67,15 @@ Remove that marker after recovery to enable the module again.
 
 ## GitHub release
 
-The source version and tag must match exactly. For v4, module.prop and
-update.json both use version v4 and versionCode 4.
+The source version and tag must match exactly. For v5, module.prop and
+update.json both use version v5 and versionCode 5.
 
 ~~~sh
 git add .
-git commit -m "Release v4"
+git commit -m "Release v5"
 git push origin main
-git tag v4
-git push origin v4
+git tag v5
+git push origin v5
 ~~~
 
 Pushing the tag starts the GitHub Release workflow. It validates the metadata,

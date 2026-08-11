@@ -13,10 +13,11 @@ case "$1" in
   dryrun-off) rm -f "$DRYRUN_FILE"; echo "Dry-run OFF.";;
   scan) scan_ota_packages;;
   scan-smart) scan_smart;;
+  resolve) activity="$(resolve_system_update_activity)"; [ -n "$activity" ] && echo "$activity" || echo "No activity resolved for android.settings.SYSTEM_UPDATE_SETTINGS";;
   health) health_check; echo "Health check done. See $LOG";;
   json) write_json_report; cat "$REPORT_JSON";;
   report) write_html_report;;
   github-help) github_help;;
   log) tail -n 120 "$LOG" 2>/dev/null;;
-  *) echo "Usage: blockota {status|block|restore|pause|resume|smart-block-on|smart-block-off|dryrun-on|dryrun-off|scan|scan-smart|health|json|report|github-help|log}";;
+  *) echo "Usage: blockota {status|block|restore|pause|resume|smart-block-on|smart-block-off|dryrun-on|dryrun-off|scan|scan-smart|resolve|health|json|report|github-help|log}";;
 esac

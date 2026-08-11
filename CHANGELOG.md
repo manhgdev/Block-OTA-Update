@@ -1,5 +1,9 @@
 # Changelog
 
+## v5
+- Resolve Android's SYSTEM_UPDATE_SETTINGS action at boot and disable its handler only when it is a dedicated, allowlisted SystemUpdate component.
+- Added blockota resolve and health reporting for the resolved system-update activity.
+
 ## v4
 - Added a safe Google Pixel boot rule set that runs only after Android boot completes.
 - Limited Pixel changes to explicit GMS OTA components and com.google.android.systemupdate for user 0.

@@ -175,11 +175,42 @@ google_pixel_components(){
     'com.google.android.gms/.update.SystemUpdateService$SecretCodeHandler'
 }
 
+resolve_system_update_activity(){
+  cmd package resolve-activity --brief --user 0 -a android.settings.SYSTEM_UPDATE_SETTINGS 2>/dev/null | grep '/' | head -n 1
+}
+
+# The action resolver makes this work across Pixel releases without guessing a
+# package.  A generic Settings dashboard or any non-SystemUpdate component is
+# never disabled: losing the update button is acceptable, losing a whole
+# Settings section is not.
+is_safe_system_update_activity(){
+  case "$1" in
+    com.google.android.gms/.update.SystemUpdate*|\
+    com.google.android.systemupdate/*SystemUpdate*|\
+    com.android.settings/.Settings\$SystemUpdate*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+block_resolved_system_update_activity(){
+  activity="$(resolve_system_update_activity)"
+  [ -n "$activity" ] || { logi "No handler resolved for android.settings.SYSTEM_UPDATE_SETTINGS"; return; }
+  if is_safe_system_update_activity "$activity"; then
+    logi "Resolved system-update activity: $activity"
+    disable_component_safely "$activity"
+  else
+    logi "WARNING: Resolved update activity is not in the narrow allowlist; skipped: $activity"
+  fi
+}
+
 block_google_pixel(){
   logi "Applying safe Google Pixel OTA rule set"
   for c in $(google_pixel_components); do
     disable_component_safely "$c"
   done
+  block_resolved_system_update_activity
   # This package is the explicit Pixel system-update UI/provider.  It is
   # changed only when installed and enabled for user 0, and is fully restorable.
   disable_package_safely "com.google.android.systemupdate"
@@ -249,6 +280,18 @@ health_check(){
     state="$(pkg_state "$p")"
     echo "Package $p: $state"
     logi "Health package $p: $state"
+    activity="$(resolve_system_update_activity)"
+    if [ -z "$activity" ]; then
+      echo "Resolved system-update activity: unavailable"
+      logi "Health resolved system-update activity: unavailable"
+    elif is_safe_system_update_activity "$activity"; then
+      state="$(component_state "$activity")"
+      echo "Resolved system-update activity $activity: $state"
+      logi "Health resolved system-update activity $activity: $state"
+    else
+      echo "Resolved system-update activity $activity: skipped (outside allowlist)"
+      logi "Health resolved system-update activity outside allowlist: $activity"
+    fi
   else
     for p in $(vendor_targets); do
       state="$(pkg_state "$p")"

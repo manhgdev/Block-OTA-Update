@@ -1,106 +1,385 @@
 #!/system/bin/sh
+
+# Safe OTA blocking helpers.  All state-changing operations are scoped to the
+# owner user (0) and recorded so that only module-owned changes are restored.
 MODDIR="/data/adb/modules/block_ota_update"
 LOG="/data/local/tmp/block_ota_update.log"
 STATE_DIR="/data/adb/block_ota_update"
-DISABLED_LIST="$STATE_DIR/disabled_packages.txt"
-BACKUP_LIST="$STATE_DIR/package_state_backup.txt"
+APPLIED_LIST="$STATE_DIR/applied_v4.txt"
+LEGACY_DISABLED_LIST="$STATE_DIR/disabled_packages.txt"
 REPORT_JSON="$STATE_DIR/report.json"
 REPORT_HTML="/sdcard/BlockOTA/report.html"
 SMART_SCAN_LIST="$STATE_DIR/smart_scan_targets.txt"
-TOGGLE_DIR="/data/adb/block_ota_update/toggles"
+TOGGLE_DIR="$STATE_DIR/toggles"
 DISABLE_FILE="$TOGGLE_DIR/disable"
-ENABLE_FILE="$TOGGLE_DIR/enable"
 DRYRUN_FILE="$TOGGLE_DIR/dryrun"
-AGGRESSIVE_FILE="$TOGGLE_DIR/aggressive"
-WATCHDOG_FILE="$TOGGLE_DIR/watchdog"
-PIXEL_STRICT_FILE="$TOGGLE_DIR/pixel_strict"
 SMART_BLOCK_FILE="$TOGGLE_DIR/smart_block"
 USER_WHITELIST="$TOGGLE_DIR/whitelist.txt"
 USER_BLACKLIST="$TOGGLE_DIR/blacklist.txt"
+
 mkdir -p "$STATE_DIR" "$TOGGLE_DIR" 2>/dev/null
 [ -f "$USER_WHITELIST" ] || cat > "$USER_WHITELIST" <<EOF
 # One package per line. Packages here will never be disabled.
 # Example: com.google.android.gms
 EOF
 [ -f "$USER_BLACKLIST" ] || cat > "$USER_BLACKLIST" <<EOF
-# One package per line. Packages here will always be targeted if installed.
+# One package per line. Packages here are only targeted by an explicit
+# blockota block or smart-block-on command.
 # Example: com.vendor.ota
 EOF
+
 logi(){ echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 lower(){ echo "$1" | tr '[:upper:]' '[:lower:]'; }
 prop(){ getprop "$1" 2>/dev/null; }
+module_value(){ sed -n "s/^$1=//p" "$MODDIR/module.prop" 2>/dev/null | head -n 1; }
+
 detect_device(){
-  BRAND="$(lower "$(prop ro.product.brand)")"; MANUFACTURER="$(lower "$(prop ro.product.manufacturer)")"; DEVICE="$(lower "$(prop ro.product.device)")"; MODEL="$(lower "$(prop ro.product.model)")"; FINGERPRINT="$(lower "$(prop ro.build.fingerprint)")"; ROM="$(lower "$(prop ro.build.version.incremental)")"; SDK="$(prop ro.build.version.sdk)"; RELEASE="$(prop ro.build.version.release)"; SLOT="$(prop ro.boot.slot_suffix)"; AB_OTA="$(prop ro.build.ab_update)"; ID="$BRAND $MANUFACTURER $DEVICE $MODEL $FINGERPRINT $ROM"; VENDOR="generic"
-  echo "$ID"|grep -qiE "google|pixel"&&VENDOR="google"; echo "$ID"|grep -qiE "samsung|oneui"&&VENDOR="samsung"; echo "$ID"|grep -qiE "xiaomi|redmi|poco|miui|hyperos"&&VENDOR="xiaomi"; echo "$ID"|grep -qiE "oppo|realme|oneplus|coloros|oxygen"&&VENDOR="oppo"; echo "$ID"|grep -qiE "vivo|iqoo|bbk"&&VENDOR="vivo"; echo "$ID"|grep -qiE "huawei|honor|emui|harmony"&&VENDOR="huawei"; echo "$ID"|grep -qiE "motorola|moto|lenovo"&&VENDOR="motorola"; echo "$ID"|grep -qiE "sony|xperia"&&VENDOR="sony"; echo "$ID"|grep -qiE "asus|rog"&&VENDOR="asus"; echo "$ID"|grep -qiE "nothing"&&VENDOR="nothing"; echo "$ID"|grep -qiE "nokia|hmd"&&VENDOR="nokia"; echo "$ID"|grep -qiE "lge|lg"&&VENDOR="lg"
+  BRAND="$(lower "$(prop ro.product.brand)")"
+  MANUFACTURER="$(lower "$(prop ro.product.manufacturer)")"
+  DEVICE="$(lower "$(prop ro.product.device)")"
+  MODEL="$(lower "$(prop ro.product.model)")"
+  FINGERPRINT="$(lower "$(prop ro.build.fingerprint)")"
+  ROM="$(lower "$(prop ro.build.version.incremental)")"
+  SDK="$(prop ro.build.version.sdk)"
+  RELEASE="$(prop ro.build.version.release)"
+  SLOT="$(prop ro.boot.slot_suffix)"
+  AB_OTA="$(prop ro.build.ab_update)"
+  ID="$BRAND $MANUFACTURER $DEVICE $MODEL $FINGERPRINT $ROM"
+  VENDOR="generic"
+  echo "$ID" | grep -qiE "google|pixel" && VENDOR="google"
+  echo "$ID" | grep -qiE "samsung|oneui" && VENDOR="samsung"
+  echo "$ID" | grep -qiE "xiaomi|redmi|poco|miui|hyperos" && VENDOR="xiaomi"
+  echo "$ID" | grep -qiE "oppo|realme|oneplus|coloros|oxygen" && VENDOR="oppo"
+  echo "$ID" | grep -qiE "vivo|iqoo|bbk" && VENDOR="vivo"
+  echo "$ID" | grep -qiE "huawei|honor|emui|harmony" && VENDOR="huawei"
+  echo "$ID" | grep -qiE "motorola|moto|lenovo" && VENDOR="motorola"
+  echo "$ID" | grep -qiE "sony|xperia" && VENDOR="sony"
+  echo "$ID" | grep -qiE "asus|rog" && VENDOR="asus"
+  echo "$ID" | grep -qiE "nothing" && VENDOR="nothing"
+  echo "$ID" | grep -qiE "nokia|hmd" && VENDOR="nokia"
+  echo "$ID" | grep -qiE "lge|lg" && VENDOR="lg"
 }
-is_user_whitelisted(){ [ -f "$USER_WHITELIST" ] || return 1; grep -v '^[[:space:]]*#' "$USER_WHITELIST"|sed '/^[[:space:]]*$/d'|grep -qx "$1"; }
-is_protected_pkg(){ is_user_whitelisted "$1"&&return 0; case "$1" in android|com.android.systemui|com.android.settings|com.android.packageinstaller|com.android.providers.settings|com.android.providers.downloads|com.google.android.gms) return 0;; esac; return 1; }
-base_targets(){
-  COMMON="com.google.android.gms.update com.android.dynsystem com.google.android.modulemetadata com.google.android.gms/.update.SystemUpdateService com.google.android.gms/.update.SystemUpdateService\$ActiveReceiver com.google.android.gms/.update.SystemUpdateActivity com.google.android.gms/.update.SystemUpdateGcmTaskService com.google.android.gms/.chimera.GmsIntentOperationService com.google.android.gms/.update.SystemUpdateService\$Receiver com.google.android.gms/.update.SystemUpdateService\$SecretCodeHandler"
-  case "$VENDOR" in
-    google) VENDOR_PKGS="com.google.android.systemupdate com.google.android.apps.work.oobconfig com.google.android.carrierconfig com.google.android.configupdater com.google.android.partnersetup";;
-    samsung) VENDOR_PKGS="com.wssyncmldm com.sec.android.soagent com.sec.android.fotaclient com.samsung.sdm com.samsung.sdm.sdmviewer com.samsung.android.lool";;
-    xiaomi) VENDOR_PKGS="com.android.updater com.miui.rom com.miui.cloudbackup com.miui.msa.global com.xiaomi.discover";;
-    oppo) VENDOR_PKGS="com.coloros.sau com.oplus.ota com.oplus.sau com.oplus.romupdate com.oneplus.opbackup";;
-    vivo) VENDOR_PKGS="com.bbk.updater com.vivo.upslide com.vivo.daemonService";;
-    huawei) VENDOR_PKGS="com.huawei.android.hwouc com.huawei.android.hwouc.overlay com.huawei.hwid";;
-    motorola) VENDOR_PKGS="com.motorola.ccc.ota com.motorola.ccc.devicemanagement com.motorola.android.fota";;
-    sony) VENDOR_PKGS="com.sonyericsson.updatecenter com.sonymobile.updatecenter";;
-    asus) VENDOR_PKGS="com.asus.dm com.asus.systemupdate com.asus.updatecenter";;
-    nothing) VENDOR_PKGS="com.nothing.ota com.nothing.systemupdate";;
-    nokia) VENDOR_PKGS="com.evenwell.ota com.evenwell.otaservice com.hmdglobal.app.update";;
-    lg) VENDOR_PKGS="com.lge.lgfota.permission com.lge.lgdmsclient com.lge.updatecenter";;
-    *) VENDOR_PKGS="com.android.updater";;
+
+is_user_whitelisted(){
+  [ -f "$USER_WHITELIST" ] || return 1
+  grep -v '^[[:space:]]*#' "$USER_WHITELIST" | sed '/^[[:space:]]*$/d' | grep -qx "$1"
+}
+
+is_protected_pkg(){
+  is_user_whitelisted "$1" && return 0
+  case "$1" in
+    android|com.android.systemui|com.android.settings|com.android.packageinstaller|com.android.providers.settings|com.android.providers.downloads|com.google.android.gms)
+      return 0
+      ;;
   esac
-  echo "$COMMON $VENDOR_PKGS"
+  return 1
 }
-pixel_strict_targets(){ detect_device; [ "$VENDOR" = "google" ] || return; [ -f "$PIXEL_STRICT_FILE" ] || [ -f "$AGGRESSIVE_FILE" ] || return; echo "com.google.android.gms/.update.SystemUpdateService com.google.android.gms/.update.SystemUpdateActivity com.google.android.gms/.update.SystemUpdateService\$ActiveReceiver com.google.android.gms/.update.SystemUpdateGcmTaskService com.google.android.apps.work.oobconfig com.android.dynsystem com.google.android.modulemetadata"; }
-aggressive_targets(){ [ -f "$AGGRESSIVE_FILE" ] || return; echo "com.android.updater com.google.android.partnersetup com.google.android.configupdater com.android.localtransport"; }
-user_blacklist_targets(){ [ -f "$USER_BLACKLIST" ] || return; grep -v '^[[:space:]]*#' "$USER_BLACKLIST"|sed '/^[[:space:]]*$/d'; }
-smart_scan_targets(){ [ -f "$SMART_BLOCK_FILE" ] || return; [ -f "$SMART_SCAN_LIST" ] && cat "$SMART_SCAN_LIST"; }
-packages_for_vendor(){ detect_device; { base_targets; pixel_strict_targets; aggressive_targets; user_blacklist_targets; smart_scan_targets; }|tr ' ' '\n'|sed '/^[[:space:]]*$/d'|sort -u; }
+
 pkg_exists(){ pm path "$1" >/dev/null 2>&1; }
-record_disabled(){ grep -qx "$1" "$DISABLED_LIST" 2>/dev/null || echo "$1" >> "$DISABLED_LIST"; }
-backup_state(){ [ -f "$BACKUP_LIST" ]&&return; for p in $(packages_for_vendor); do echo "$p"|grep -q "/"&&continue; pkg_exists "$p"||continue; state="$(pm list packages -d 2>/dev/null|grep -q "package:$p"&&echo disabled||echo enabled)"; echo "$p $state" >> "$BACKUP_LIST"; done; logi "Backup state saved"; }
-disable_component(){ c="$1"; [ -f "$DRYRUN_FILE" ]&&{ logi "[DRYRUN] Would disable component: $c"; return; }; pm disable "$c" >/dev/null 2>&1&&logi "Disabled component: $c"; }
-force_stop_pkg(){ p="$1"; [ -f "$DRYRUN_FILE" ]&&return; timeout 5 am force-stop "$p" 2>/dev/null; timeout 5 am kill-background-processes "$p" 2>/dev/null; for pid in $(timeout 5 ps -A 2>/dev/null|grep -i "$p"|awk '{print $2}'); do kill -9 "$pid" 2>/dev/null; done; }
-clear_pkg_data(){ p="$1"; [ -f "$DRYRUN_FILE" ]&&return; [ "$p" = "com.google.android.gms" ]&&return; pm clear "$p" 2>/dev/null; }
-disable_pkg(){ p="$1"; echo "$p"|grep -q "/"&&{ disable_component "$p"; return; }; pkg_exists "$p"||return; if is_protected_pkg "$p"; then logi "Skip protected/whitelisted package: $p"; return; fi; [ -f "$DRYRUN_FILE" ]&&{ logi "[DRYRUN] Would disable package: $p"; return; }; force_stop_pkg "$p"; clear_pkg_data "$p"; for user in $(cmd user list 2>/dev/null|grep -oE '\{[0-9]+'|tr -d '{'); do pm disable-user --user "$user" "$p" >/dev/null 2>&1&&{ logi "Disabled package user=$user: $p"; record_disabled "$p"; }; pm hide "$p" >/dev/null 2>&1&&logi "Hidden package: $p"; done; pm disable "$p" >/dev/null 2>&1&&{ logi "Disabled package globally: $p"; record_disabled "$p"; }; }
-restore_pkg(){ p="$1"; echo "$p"|grep -q "/"&&{ pm enable "$p" >/dev/null 2>&1; logi "Restored component: $p"; return; }; for user in $(cmd user list 2>/dev/null|grep -oE '\{[0-9]+'|tr -d '{'); do pm enable --user "$user" "$p" >/dev/null 2>&1&&logi "Enabled user=$user: $p"; pm unhide "$p" >/dev/null 2>&1; done; pm enable "$p" >/dev/null 2>&1&&logi "Enabled globally: $p"; }
-block_jobs(){ for p in $(packages_for_vendor); do echo "$p"|grep -q "/"&&continue; pkg_exists "$p"||continue; cmd jobscheduler cancel "$p" 0 >/dev/null 2>&1; cmd jobscheduler cancel -u 0 "$p" 0 >/dev/null 2>&1; done; logi "Best-effort updater jobs cancelled"; }
-block_settings(){
-  settings put global ota_disable_automatic_update 1 2>/dev/null
-  settings put global update_engine_disable 1 2>/dev/null
-  settings put global automatic_system_updates 0 2>/dev/null
-  settings put secure automatic_storage_manager_enabled 0 2>/dev/null
-  settings put global software_update_check 0 2>/dev/null
-  settings put global system_update_policy 0 2>/dev/null
-  settings put secure update_recovery 0 2>/dev/null
-  settings put global update_app_active 0 2>/dev/null
-  settings put global update_apps_enable 0 2>/dev/null
-  logi "Applied OTA-related settings"
+
+pkg_state(){
+  p="$1"
+  if ! pkg_exists "$p"; then
+    echo "absent"
+  elif pm list packages -d --user 0 2>/dev/null | grep -qx "package:$p"; then
+    echo "disabled"
+  else
+    echo "enabled"
+  fi
 }
-block_update_engine(){ [ -f "$DRYRUN_FILE" ]&&return; timeout 5 stop update_engine 2>/dev/null; timeout 5 stop update_engine_sideload 2>/dev/null; pm disable com.google.android.gms.update 2>/dev/null; pm disable com.google.android.systemupdate 2>/dev/null; }
-block_network(){ [ -f "$DRYRUN_FILE" ]&&return; for pkg in com.google.android.gms com.google.android.systemupdate; do uid=$(pm list packages -U "$pkg" 2>/dev/null|grep -oE 'uid:[0-9]+'|cut -d: -f2); [ -n "$uid" ]&&{ iptables -I OUTPUT -m owner --uid-owner "$uid" -p tcp --dport 80 -j DROP 2>/dev/null; iptables -I OUTPUT -m owner --uid-owner "$uid" -p tcp --dport 443 -j DROP 2>/dev/null; ip6tables -I OUTPUT -m owner --uid-owner "$uid" -p tcp --dport 80 -j DROP 2>/dev/null; ip6tables -I OUTPUT -m owner --uid-owner "$uid" -p tcp --dport 443 -j DROP 2>/dev/null; logi "Blocked network for: $pkg (uid=$uid)"; }; done; }
-clean_ota_files(){ block_update_engine; for d in /data/ota_package /data/system_updates /data/update_engine /data/ota /data/fota /data/cache /cache/recovery /cache/fota /cache/ota /metadata/ota /sdcard/Download /sdcard/OTA /sdcard/.OTA /data/data/com.google.android.gms/app_update /data/data/com.google.android.gms/cache/update; do [ -d "$d" ]||continue; find "$d" -maxdepth 4 -type f \( -iname "*ota*.zip" -o -iname "*update*.zip" -o -iname "*firmware*.zip" -o -iname "payload.bin" -o -iname "*.payload" -o -iname "care_map.pb" -o -iname "metadata.pb" -o -iname "compatibility.zip" \) -delete 2>/dev/null; logi "Cleaned OTA payloads in: $d"; done; }
-scan_ota_packages(){ echo "Installed packages matching OTA/update keywords:"; pm list packages 2>/dev/null|cut -d: -f2|grep -iE "ota|fota|update|updater|systemupdate|fotaclient|soagent|wssync|hwouc|sau|romupdate|dmclient|device.*management"|sort; }
-scan_smart(){ pm list packages 2>/dev/null|cut -d: -f2|grep -iE "ota|fota|systemupdate|fotaclient|soagent|wssync|hwouc|romupdate|updater|updatecenter|dmclient|device.*management|ccc.ota|sau"|sort > "$SMART_SCAN_LIST"; logi "Smart scan saved: $SMART_SCAN_LIST"; cat "$SMART_SCAN_LIST"; }
-health_check(){ detect_device; failed=""; ok=""; for p in $(packages_for_vendor); do echo "$p"|grep -q "/"&&continue; pkg_exists "$p"||continue; if pm list packages -d 2>/dev/null|grep -q "package:$p"; then ok="$ok $p"; else if is_protected_pkg "$p"; then ok="$ok $p(protected)"; else failed="$failed $p"; fi; fi; done; logi "Health ok:$ok"; [ -n "$failed" ]&&logi "Health still enabled:$failed"; }
-write_json_report(){ detect_device; active=true; [ -f "$DISABLE_FILE" ]&&active=false; aggressive=false; [ -f "$AGGRESSIVE_FILE" ]&&aggressive=true; dryrun=false; [ -f "$DRYRUN_FILE" ]&&dryrun=true; watchdog=false; [ -f "$WATCHDOG_FILE" ]&&watchdog=true; pixel_strict=false; [ -f "$PIXEL_STRICT_FILE" ]&&pixel_strict=true; smart_block=false; [ -f "$SMART_BLOCK_FILE" ]&&smart_block=true; disabled_count=0; [ -f "$DISABLED_LIST" ]&&disabled_count="$(wc -l < "$DISABLED_LIST"|tr -d ' ')"; smart_count=0; [ -f "$SMART_SCAN_LIST" ]&&smart_count="$(wc -l < "$SMART_SCAN_LIST"|tr -d ' ')"; cat > "$REPORT_JSON" <<EOF
-{"module":"Block OTA Update","version":"v4","versionCode":3,"active":$active,"aggressive":$aggressive,"dryrun":$dryrun,"watchdog":$watchdog,"pixel_strict":$pixel_strict,"smart_block":$smart_block,"vendor":"$VENDOR","brand":"$BRAND","manufacturer":"$MANUFACTURER","model":"$MODEL","device":"$DEVICE","android_release":"$RELEASE","sdk":"$SDK","ab_ota":"$AB_OTA","slot":"$SLOT","disabled_record_count":$disabled_count,"smart_scan_count":$smart_count,"log":"$LOG"}
+
+component_package(){ echo "$1" | cut -d/ -f1; }
+component_full_name(){
+  c="$1"
+  p="$(component_package "$c")"
+  short="$(echo "$c" | cut -d/ -f2-)"
+  case "$short" in
+    .*) echo "$p$short" ;;
+    *) echo "$short" ;;
+  esac
+}
+
+component_exists(){
+  c="$1"
+  p="$(component_package "$c")"
+  full="$(component_full_name "$c")"
+  pkg_exists "$p" || return 1
+  dumpsys package "$p" 2>/dev/null | grep -Fq "$full"
+}
+
+# A component is safe to change only when its state can be read from the
+# primary-user package dump.  Unknown state is deliberately skipped.
+component_state(){
+  c="$1"
+  p="$(component_package "$c")"
+  full="$(component_full_name "$c")"
+  dump="$(dumpsys package "$p" 2>/dev/null)" || { echo "unknown"; return; }
+  echo "$dump" | grep -q '^[[:space:]]*User 0:' || { echo "unknown"; return; }
+  echo "$dump" | awk -v target="$full" '
+    $1 == "User" && $2 == "0:" { in_user=1; section=""; next }
+    $1 == "User" && $2 ~ /^[0-9]+:$/ && in_user { exit }
+    !in_user { next }
+    $0 ~ /^[[:space:]]*disabledComponents:/ { section="disabled"; next }
+    $0 ~ /^[[:space:]]*enabledComponents:/ { section="enabled"; next }
+    section == "disabled" && index($0, target) > 0 { found=1; exit }
+    END { if (found) print "disabled"; else print "enabled" }
+  '
+}
+
+record_applied(){
+  entry="$1|$2"
+  grep -Fqx "$entry" "$APPLIED_LIST" 2>/dev/null || echo "$entry" >> "$APPLIED_LIST"
+}
+
+disable_component_safely(){
+  c="$1"
+  p="$(component_package "$c")"
+  [ -f "$DRYRUN_FILE" ] && { logi "[DRYRUN] Would disable component user=0: $c"; return; }
+  is_user_whitelisted "$p" && { logi "Skip whitelisted component package: $p"; return; }
+  component_exists "$c" || { logi "Skip unavailable OTA component: $c"; return; }
+  state="$(component_state "$c")"
+  case "$state" in
+    disabled) logi "Component already disabled user=0: $c"; return ;;
+    unknown) logi "WARNING: State unknown; skipped component: $c"; return ;;
+  esac
+  if pm disable-user --user 0 "$c" >/dev/null 2>&1; then
+    record_applied component "$c"
+    logi "Disabled OTA component user=0: $c"
+  else
+    logi "WARNING: Could not disable OTA component: $c"
+  fi
+}
+
+disable_package_safely(){
+  p="$1"
+  [ -f "$DRYRUN_FILE" ] && { logi "[DRYRUN] Would disable package user=0: $p"; return; }
+  pkg_exists "$p" || { logi "Skip unavailable package: $p"; return; }
+  is_protected_pkg "$p" && { logi "Skip protected/whitelisted package: $p"; return; }
+  state="$(pkg_state "$p")"
+  [ "$state" = "disabled" ] && { logi "Package already disabled user=0: $p"; return; }
+  if pm disable-user --user 0 "$p" >/dev/null 2>&1; then
+    record_applied package "$p"
+    logi "Disabled OTA package user=0: $p"
+  else
+    logi "WARNING: Could not disable OTA package: $p"
+  fi
+}
+
+google_pixel_components(){
+  printf '%s\n' \
+    'com.google.android.gms/.update.SystemUpdateService' \
+    'com.google.android.gms/.update.SystemUpdateService$ActiveReceiver' \
+    'com.google.android.gms/.update.SystemUpdateActivity' \
+    'com.google.android.gms/.update.SystemUpdateGcmTaskService' \
+    'com.google.android.gms/.update.SystemUpdateService$Receiver' \
+    'com.google.android.gms/.update.SystemUpdateService$SecretCodeHandler'
+}
+
+block_google_pixel(){
+  logi "Applying safe Google Pixel OTA rule set"
+  for c in $(google_pixel_components); do
+    disable_component_safely "$c"
+  done
+  # This package is the explicit Pixel system-update UI/provider.  It is
+  # changed only when installed and enabled for user 0, and is fully restorable.
+  disable_package_safely "com.google.android.systemupdate"
+}
+
+vendor_targets(){
+  case "$VENDOR" in
+    samsung) echo "com.wssyncmldm com.sec.android.soagent com.sec.android.fotaclient com.samsung.sdm com.samsung.sdm.sdmviewer com.samsung.android.lool" ;;
+    xiaomi) echo "com.android.updater com.miui.rom" ;;
+    oppo) echo "com.coloros.sau com.oplus.ota com.oplus.sau com.oplus.romupdate" ;;
+    vivo) echo "com.bbk.updater com.vivo.upslide" ;;
+    huawei) echo "com.huawei.android.hwouc com.huawei.android.hwouc.overlay" ;;
+    motorola) echo "com.motorola.ccc.ota com.motorola.android.fota" ;;
+    sony) echo "com.sonyericsson.updatecenter com.sonymobile.updatecenter" ;;
+    asus) echo "com.asus.dm com.asus.systemupdate com.asus.updatecenter" ;;
+    nothing) echo "com.nothing.ota com.nothing.systemupdate" ;;
+    nokia) echo "com.evenwell.ota com.evenwell.otaservice com.hmdglobal.app.update" ;;
+    lg) echo "com.lge.lgdmsclient com.lge.updatecenter" ;;
+    *) echo "com.android.updater" ;;
+  esac
+}
+
+user_blacklist_targets(){
+  [ -f "$USER_BLACKLIST" ] || return
+  grep -v '^[[:space:]]*#' "$USER_BLACKLIST" | sed '/^[[:space:]]*$/d'
+}
+
+block_vendor_packages(){
+  for p in $(vendor_targets; user_blacklist_targets); do
+    disable_package_safely "$p"
+  done
+}
+
+scan_ota_packages(){
+  echo "Installed packages matching OTA/update keywords:"
+  pm list packages 2>/dev/null | cut -d: -f2 | grep -iE "ota|fota|update|updater|systemupdate|fotaclient|soagent|wssync|hwouc|sau|romupdate|dmclient|device.*management" | sort
+}
+
+scan_smart(){
+  pm list packages 2>/dev/null | cut -d: -f2 | grep -iE "ota|fota|systemupdate|fotaclient|soagent|wssync|hwouc|romupdate|updater|updatecenter|dmclient|device.*management|ccc.ota|sau" | sort > "$SMART_SCAN_LIST"
+  logi "Smart scan saved: $SMART_SCAN_LIST"
+  cat "$SMART_SCAN_LIST"
+}
+
+block_smart_targets(){
+  [ -f "$SMART_SCAN_LIST" ] || { logi "Smart block skipped: run scan-smart first"; return; }
+  logi "WARNING: Applying user-requested Smart Block targets"
+  while IFS= read -r p; do
+    [ -n "$p" ] && disable_package_safely "$p"
+  done < "$SMART_SCAN_LIST"
+}
+
+health_check(){
+  detect_device
+  if [ "$VENDOR" = "google" ]; then
+    for c in $(google_pixel_components); do
+      if component_exists "$c"; then
+        state="$(component_state "$c")"
+        echo "Component $c: $state"
+        logi "Health component $c: $state"
+      else
+        echo "Component $c: unavailable"
+        logi "Health component unavailable: $c"
+      fi
+    done
+    p="com.google.android.systemupdate"
+    state="$(pkg_state "$p")"
+    echo "Package $p: $state"
+    logi "Health package $p: $state"
+  else
+    for p in $(vendor_targets); do
+      state="$(pkg_state "$p")"
+      echo "Package $p: $state"
+      logi "Health package $p: $state"
+    done
+  fi
+}
+
+write_json_report(){
+  detect_device
+  active=true
+  [ -f "$DISABLE_FILE" ] && active=false
+  dryrun=false
+  [ -f "$DRYRUN_FILE" ] && dryrun=true
+  smart_block=false
+  [ -f "$SMART_BLOCK_FILE" ] && smart_block=true
+  applied_count=0
+  [ -f "$APPLIED_LIST" ] && applied_count="$(wc -l < "$APPLIED_LIST" | tr -d ' ')"
+  smart_count=0
+  [ -f "$SMART_SCAN_LIST" ] && smart_count="$(wc -l < "$SMART_SCAN_LIST" | tr -d ' ')"
+  version="$(module_value version)"
+  version_code="$(module_value versionCode)"
+  cat > "$REPORT_JSON" <<EOF
+{"module":"Block OTA Update","version":"$version","versionCode":$version_code,"active":$active,"dryrun":$dryrun,"smart_block":$smart_block,"vendor":"$VENDOR","brand":"$BRAND","manufacturer":"$MANUFACTURER","model":"$MODEL","device":"$DEVICE","android_release":"$RELEASE","sdk":"$SDK","ab_ota":"$AB_OTA","slot":"$SLOT","applied_record_count":$applied_count,"smart_scan_count":$smart_count,"log":"$LOG"}
 EOF
 }
-write_html_report(){ write_json_report; cat > "$REPORT_HTML" <<EOF
-<!doctype html><html><head><meta charset="utf-8"><title>Block OTA Update</title><style>body{font-family:Arial;background:#111;color:#eee;padding:20px}.card{background:#1d1d1d;border-radius:12px;padding:16px;margin:12px 0}.ok{color:#6ee77a}.warn{color:#ffd166}pre{white-space:pre-wrap;background:#0b0b0b;padding:12px;border-radius:8px}</style></head><body><h1>Block OTA Update</h1><div class="card"><b>Vendor:</b> $VENDOR<br><b>Brand:</b> $BRAND<br><b>Manufacturer:</b> $MANUFACTURER<br><b>Model:</b> $MODEL<br><b>Android:</b> $RELEASE / SDK $SDK<br><b>A/B OTA:</b> $AB_OTA</div><div class="card"><b>Status:</b> $( [ -f "$DISABLE_FILE" ] && echo '<span class="warn">PAUSED</span>' || echo '<span class="ok">ACTIVE</span>' )<br><b>Aggressive:</b> $( [ -f "$AGGRESSIVE_FILE" ]&&echo yes||echo no )<br><b>Pixel strict:</b> $( [ -f "$PIXEL_STRICT_FILE" ]&&echo yes||echo no )<br><b>Watchdog:</b> $( [ -f "$WATCHDOG_FILE" ]&&echo yes||echo no )<br><b>Smart block:</b> $( [ -f "$SMART_BLOCK_FILE" ]&&echo yes||echo no )</div><div class="card"><h2>Disabled records</h2><pre>$( [ -f "$DISABLED_LIST" ]&&cat "$DISABLED_LIST"||echo none )</pre></div><div class="card"><h2>Smart scan targets</h2><pre>$( [ -f "$SMART_SCAN_LIST" ]&&cat "$SMART_SCAN_LIST"||echo none )</pre></div><div class="card"><h2>Log tail</h2><pre>$( tail -n 80 "$LOG" 2>/dev/null )</pre></div></body></html>
+
+write_html_report(){
+  write_json_report
+  cat > "$REPORT_HTML" <<EOF
+<!doctype html><html><head><meta charset="utf-8"><title>Block OTA Update</title><style>body{font-family:Arial;background:#111;color:#eee;padding:20px}.card{background:#1d1d1d;border-radius:12px;padding:16px;margin:12px 0}.ok{color:#6ee77a}.warn{color:#ffd166}pre{white-space:pre-wrap;background:#0b0b0b;padding:12px;border-radius:8px}</style></head><body><h1>Block OTA Update</h1><div class="card"><b>Vendor:</b> $VENDOR<br><b>Brand:</b> $BRAND<br><b>Manufacturer:</b> $MANUFACTURER<br><b>Model:</b> $MODEL<br><b>Android:</b> $RELEASE / SDK $SDK<br><b>A/B OTA:</b> $AB_OTA</div><div class="card"><b>Status:</b> $( [ -f "$DISABLE_FILE" ] && echo '<span class="warn">PAUSED</span>' || echo '<span class="ok">ACTIVE</span>' )<br><b>Dry-run:</b> $( [ -f "$DRYRUN_FILE" ] && echo yes || echo no )<br><b>Smart block:</b> $( [ -f "$SMART_BLOCK_FILE" ] && echo armed || echo off )</div><div class="card"><h2>Module-owned changes</h2><pre>$( [ -f "$APPLIED_LIST" ] && cat "$APPLIED_LIST" || echo none )</pre></div><div class="card"><h2>Smart scan targets</h2><pre>$( [ -f "$SMART_SCAN_LIST" ] && cat "$SMART_SCAN_LIST" || echo none )</pre></div><div class="card"><h2>Log tail</h2><pre>$( tail -n 80 "$LOG" 2>/dev/null )</pre></div></body></html>
 EOF
-echo "$REPORT_HTML"; }
-github_help(){ cat <<EOF
-GitHub update setup:
-1) Edit update.json version only, for example: "version": "v3"
-2) Run GitHub Actions > Release
-3) The workflow builds ZIP, updates metadata, and publishes the release
+  echo "$REPORT_HTML"
+}
+
+github_help(){
+  cat <<EOF
+GitHub release setup:
+1) Set the same vN / N version in module.prop and update.json.
+2) Commit and push main.
+3) Create and push tag vN. GitHub Actions validates metadata, builds the ZIP, and creates the release.
 EOF
 }
-status_report(){ detect_device; write_json_report; echo "Block OTA Update"; echo "Vendor: $VENDOR"; echo "Brand: $BRAND"; echo "Manufacturer: $MANUFACTURER"; echo "Model: $MODEL"; echo "Android: $RELEASE / SDK $SDK"; echo "A/B OTA: $AB_OTA Slot: $SLOT"; [ -f "$DISABLE_FILE" ]&&echo "Status: PAUSED"||echo "Status: ACTIVE"; [ -f "$AGGRESSIVE_FILE" ]&&echo "Mode: AGGRESSIVE"||echo "Mode: SAFE"; [ -f "$PIXEL_STRICT_FILE" ]&&echo "Pixel strict: ON"||echo "Pixel strict: OFF"; [ -f "$WATCHDOG_FILE" ]&&echo "Watchdog: ON"||echo "Watchdog: OFF"; [ -f "$SMART_BLOCK_FILE" ]&&echo "Smart block: ON"||echo "Smart block: OFF"; [ -f "$DRYRUN_FILE" ]&&echo "Dry-run: ON"||echo "Dry-run: OFF"; echo "JSON report: $REPORT_JSON"; echo "HTML report: $REPORT_HTML"; tail -n 30 "$LOG" 2>/dev/null; }
-block_all(){ [ -f "$DISABLE_FILE" ]&&{ logi "Paused: $DISABLE_FILE exists"; write_json_report; return 0; }; detect_device; [ "$VENDOR" = "google" ] && [ ! -f "$STATE_DIR/.pixel_strict_auto" ] && { touch "$PIXEL_STRICT_FILE" "$STATE_DIR/.pixel_strict_auto"; logi "Auto-enabled Pixel strict mode for Google device"; }; backup_state; logi "Detected vendor=$VENDOR brand=$BRAND manufacturer=$MANUFACTURER model=$MODEL android=$RELEASE sdk=$SDK ab=$AB_OTA"; block_settings; for p in $(packages_for_vendor); do disable_pkg "$p"; done; block_jobs; if [ -f "$AGGRESSIVE_FILE" ]; then timeout 10 block_network 2>/dev/null; timeout 10 clean_ota_files 2>/dev/null; fi; health_check; write_json_report; logi "Block cycle complete"; }
-restore_all(){ logi "Restoring disabled OTA packages/components"; if [ -f "$DISABLED_LIST" ]; then while read -r p; do [ -n "$p" ]&&restore_pkg "$p"; done < "$DISABLED_LIST"; fi; for p in $(packages_for_vendor); do restore_pkg "$p"; done; rm -f "$DISABLED_LIST"; write_json_report; logi "Restore complete"; }
+
+status_report(){
+  detect_device
+  write_json_report
+  echo "Block OTA Update"
+  echo "Vendor: $VENDOR"
+  echo "Brand: $BRAND"
+  echo "Manufacturer: $MANUFACTURER"
+  echo "Model: $MODEL"
+  echo "Android: $RELEASE / SDK $SDK"
+  echo "A/B OTA: $AB_OTA Slot: $SLOT"
+  [ -f "$DISABLE_FILE" ] && echo "Status: PAUSED" || echo "Status: ACTIVE"
+  [ -f "$SMART_BLOCK_FILE" ] && echo "Smart block: ARMED (manual only)" || echo "Smart block: OFF"
+  [ -f "$DRYRUN_FILE" ] && echo "Dry-run: ON" || echo "Dry-run: OFF"
+  echo "JSON report: $REPORT_JSON"
+  echo "HTML report: $REPORT_HTML"
+  tail -n 30 "$LOG" 2>/dev/null
+}
+
+block_all(){
+  [ -f "$DISABLE_FILE" ] && { logi "Paused: $DISABLE_FILE exists"; write_json_report; return 0; }
+  detect_device
+  logi "Applying safe OTA rules for vendor=$VENDOR model=$MODEL android=$RELEASE sdk=$SDK"
+  if [ "$VENDOR" = "google" ]; then
+    block_google_pixel
+  else
+    block_vendor_packages
+  fi
+  health_check >/dev/null
+  write_json_report
+  logi "Safe OTA block cycle complete"
+}
+
+apply_boot_rules(){
+  detect_device
+  if [ "$VENDOR" = "google" ]; then
+    block_all
+  else
+    logi "Boot auto-block skipped for vendor=$VENDOR; use blockota block explicitly"
+    write_json_report
+  fi
+}
+
+restore_all(){
+  pending="$STATE_DIR/applied_v4.pending.$$"
+  [ -f "$APPLIED_LIST" ] || { logi "No v4 module-owned changes to restore"; write_json_report; return 0; }
+  : > "$pending" || { logi "WARNING: Cannot create restore state file"; return 1; }
+  while IFS='|' read -r kind target; do
+    [ -n "$kind" ] || continue
+    restored=false
+    case "$kind" in
+      component)
+        if ! component_exists "$target"; then
+          restored=true
+          logi "Component no longer present; dropped restore record: $target"
+        elif pm enable --user 0 "$target" >/dev/null 2>&1; then
+          restored=true
+          logi "Restored component user=0: $target"
+        fi
+        ;;
+      package)
+        if ! pkg_exists "$target"; then
+          restored=true
+          logi "Package no longer present; dropped restore record: $target"
+        elif pm enable --user 0 "$target" >/dev/null 2>&1; then
+          restored=true
+          logi "Restored package user=0: $target"
+        fi
+        ;;
+      *)
+        restored=true
+        logi "Dropped invalid restore record: $kind|$target"
+        ;;
+    esac
+    if [ "$restored" = true ]; then
+      :
+    else
+      echo "$kind|$target" >> "$pending"
+      logi "WARNING: Restore failed; keeping record: $kind|$target"
+    fi
+  done < "$APPLIED_LIST"
+  if [ -s "$pending" ]; then
+    mv "$pending" "$APPLIED_LIST"
+  else
+    rm -f "$pending" "$APPLIED_LIST"
+  fi
+  [ -f "$LEGACY_DISABLED_LIST" ] && logi "Legacy v3 disable list retained untouched for safety: $LEGACY_DISABLED_LIST"
+  write_json_report
+  logi "Restore cycle complete"
+}

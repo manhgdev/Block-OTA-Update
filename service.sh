@@ -1,9 +1,11 @@
 #!/system/bin/sh
-LOG="/data/local/tmp/block_ota_update.log"
+MODDIR="/data/adb/modules/block_ota_update"
+[ -f "$MODDIR/common.sh" ] || exit 1
+. "$MODDIR/common.sh"
 
 while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 5; done
-sleep 30
+sleep 15
 
-echo "[$(date)] service started" >> "$LOG"
-pm disable com.google.android.gms/.update.SystemUpdateService 2>/dev/null
-echo "[$(date)] OTA blocked" >> "$LOG"
+logi "Boot completed; evaluating safe OTA rules"
+apply_boot_rules
+logi "Boot OTA rule evaluation finished"

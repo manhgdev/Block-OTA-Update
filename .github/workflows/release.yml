@@ -24,13 +24,13 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$GITHUB_REF_NAME"
-          if [[ ! "$VERSION" =~ ^v([0-9]+)\.([0-9]+)$ ]]; then
+          if [[ ! "$VERSION" =~ ^v([0-9]+)\.([0-9])$ ]]; then
             echo "Release tag must look like v7.1"
             exit 1
           fi
           MAJOR="${BASH_REMATCH[1]}"
           MINOR="${BASH_REMATCH[2]}"
-          VERSION_CODE="$((10#$MAJOR * 100 + 10#$MINOR))"
+          VERSION_CODE="$((10#$MAJOR * 10 + 10#$MINOR))"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 

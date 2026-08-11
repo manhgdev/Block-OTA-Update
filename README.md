@@ -82,7 +82,7 @@ Remove that marker after recovery to enable the module again.
 
 Starting with v7.1, release versions increase by 0.1: `v7.1`, `v7.2`, …,
 `v7.9`, `v8.0`. The source version and tag must match exactly. `versionCode`
-is `major * 100 + minor`, so v7.1 is 701, v7.9 is 709, and v8.0 is 800.
+is `major * 10 + minor`, so v7.1 is 71, v7.9 is 79, and v8.0 is 80.
 
 ~~~sh
 git add .

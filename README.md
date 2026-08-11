@@ -80,15 +80,16 @@ Remove that marker after recovery to enable the module again.
 
 ## GitHub release
 
-The source version and tag must match exactly. For v7, module.prop and
-update.json both use version v7 and versionCode 7.
+Starting with v7.1, release versions increase by 0.1: `v7.1`, `v7.2`, …,
+`v7.9`, `v8.0`. The source version and tag must match exactly. `versionCode`
+is `major * 100 + minor`, so v7.1 is 701, v7.9 is 709, and v8.0 is 800.
 
 ~~~sh
 git add .
-git commit -m "Release v7"
+git commit -m "Release v7.1"
 git push origin main
-git tag v7
-git push origin v7
+git tag v7.1
+git push origin v7.1
 ~~~
 
 Pushing the tag starts the GitHub Release workflow. It validates the metadata,

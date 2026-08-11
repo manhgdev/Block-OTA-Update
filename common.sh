@@ -374,9 +374,10 @@ EOF
 github_help(){
   cat <<EOF
 GitHub release setup:
-1) Set the same vN / N version in module.prop and update.json.
+1) From v7.1 onward, set the same vM.m version in module.prop and update.json.
+   Set versionCode to M * 100 + m (v7.1 = 701; v7.9 = 709; v8.0 = 800).
 2) Commit and push main.
-3) Create and push tag vN. GitHub Actions validates metadata, builds the ZIP, and creates the release.
+3) Create and push tag vM.m. GitHub Actions validates metadata, builds the ZIP, and creates the release.
 EOF
 }
 

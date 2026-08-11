@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rules>
+  <!-- Block OTA Update: module-owned manual System Update rule. -->
+  <activity block="true" log="false">
+    <intent-filter>
+      <action name="android.settings.SYSTEM_UPDATE_SETTINGS" />
+    </intent-filter>
+    <component-filter name="com.google.android.gms/.update.SystemUpdateActivity" />
+  </activity>
+</rules>

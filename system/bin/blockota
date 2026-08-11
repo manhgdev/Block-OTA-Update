@@ -5,7 +5,7 @@ case "$1" in
   status|"") status_report;;
   block|enforce) rm -f "$DISABLE_FILE"; block_all; echo "Safe OTA block applied.";;
   restore|enable) touch "$DISABLE_FILE"; restore_all; echo "Restored and paused. Run blockota resume to block again.";;
-  pause|disable) touch "$DISABLE_FILE"; echo "Paused.";;
+  pause|disable) touch "$DISABLE_FILE"; remove_pixel_manual_update_rule || true; echo "Paused. Use blockota restore to re-enable module-owned components.";;
   resume) rm -f "$DISABLE_FILE"; block_all; echo "Resumed.";;
   smart-block-on) touch "$SMART_BLOCK_FILE"; scan_smart >/dev/null; block_smart_targets; echo "Smart block applied. Review the log before rebooting.";;
   smart-block-off) rm -f "$SMART_BLOCK_FILE"; echo "Smart block OFF.";;

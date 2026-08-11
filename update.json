@@ -1,6 +1,6 @@
 {
-  "version": "v7",
-  "versionCode": 7,
+  "version": "v7.1",
+  "versionCode": 71,
   "zipUrl": "https://github.com/manhgdev/Block-OTA-Update/releases/latest/download/Block-OTA-Update.zip",
   "changelog": "https://raw.githubusercontent.com/manhgdev/Block-OTA-Update/main/CHANGELOG.md"
 }

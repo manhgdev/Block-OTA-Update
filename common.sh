@@ -16,6 +16,12 @@ DRYRUN_FILE="$TOGGLE_DIR/dryrun"
 SMART_BLOCK_FILE="$TOGGLE_DIR/smart_block"
 USER_WHITELIST="$TOGGLE_DIR/whitelist.txt"
 USER_BLACKLIST="$TOGGLE_DIR/blacklist.txt"
+IFW_DIR="/data/system/ifw"
+IFW_RULE="$IFW_DIR/block_ota_update.xml"
+IFW_SOURCE="$MODDIR/ifw/block_ota_update.xml"
+IFW_RULE_OWNER="Block OTA Update: module-owned manual System Update rule"
+IFW_ACTION="android.settings.SYSTEM_UPDATE_SETTINGS"
+IFW_COMPONENT="com.google.android.gms/.update.SystemUpdateActivity"
 
 mkdir -p "$STATE_DIR" "$TOGGLE_DIR" 2>/dev/null
 [ -f "$USER_WHITELIST" ] || cat > "$USER_WHITELIST" <<EOF
@@ -136,6 +142,78 @@ component_exists(){
   grep -Fq "$full" "$COMPONENT_DUMP_FILE"
 }
 
+# Intent Firewall runs inside Android's Activity Manager. This one rule blocks
+# only the manual System Update action and its known Pixel handler. It avoids
+# changing Settings, Google Play services, networking, or any update daemon.
+ifw_rule_is_owned(){
+  [ -f "$IFW_RULE" ] && grep -Fq "$IFW_RULE_OWNER" "$IFW_RULE" 2>/dev/null
+}
+
+ifw_source_is_safe(){
+  [ -f "$IFW_SOURCE" ] &&
+    grep -Fq "$IFW_RULE_OWNER" "$IFW_SOURCE" 2>/dev/null &&
+    grep -Fq "<action name=\"$IFW_ACTION\" />" "$IFW_SOURCE" 2>/dev/null &&
+    grep -Fq "<component-filter name=\"$IFW_COMPONENT\" />" "$IFW_SOURCE" 2>/dev/null
+}
+
+ifw_rule_state(){
+  if [ ! -e "$IFW_RULE" ]; then
+    echo "absent"
+  elif ifw_rule_is_owned; then
+    echo "installed"
+  else
+    echo "foreign (untouched)"
+  fi
+}
+
+install_pixel_manual_update_rule(){
+  quiet="${1:-false}"
+  [ -f "$DRYRUN_FILE" ] && { [ "$quiet" = true ] || logi "[DRYRUN] Would install exact Pixel System Update Intent Firewall rule"; return 0; }
+  if ! ifw_source_is_safe; then
+    logi "WARNING: Intent Firewall source failed its exact-target safety check; skipped"
+    return 1
+  fi
+  if [ -e "$IFW_RULE" ] && ! ifw_rule_is_owned; then
+    logi "WARNING: Existing Intent Firewall rule is not module-owned; left untouched: $IFW_RULE"
+    return 1
+  fi
+  if [ -f "$IFW_RULE" ] && cmp -s "$IFW_SOURCE" "$IFW_RULE" 2>/dev/null; then
+    [ "$quiet" = true ] || logi "Pixel System Update Intent Firewall rule already installed"
+    return 0
+  fi
+  mkdir -p "$IFW_DIR" 2>/dev/null || { logi "WARNING: Cannot access Intent Firewall directory: $IFW_DIR"; return 1; }
+  tmp="$IFW_DIR/.block_ota_update.$$"
+  rm -f "$tmp"
+  if cp "$IFW_SOURCE" "$tmp" 2>/dev/null &&
+     chown system:system "$tmp" 2>/dev/null &&
+     chmod 600 "$tmp" 2>/dev/null &&
+     { restorecon "$tmp" >/dev/null 2>&1 || true; } &&
+     mv "$tmp" "$IFW_RULE" 2>/dev/null; then
+    logi "Installed exact Pixel System Update Intent Firewall rule"
+    return 0
+  fi
+  rm -f "$tmp"
+  logi "WARNING: Could not install Pixel System Update Intent Firewall rule"
+  return 1
+}
+
+remove_pixel_manual_update_rule(){
+  if [ ! -e "$IFW_RULE" ]; then
+    logi "Pixel System Update Intent Firewall rule already absent"
+    return 0
+  fi
+  if ! ifw_rule_is_owned; then
+    logi "WARNING: Refusing to remove non-module Intent Firewall rule: $IFW_RULE"
+    return 1
+  fi
+  if rm -f "$IFW_RULE"; then
+    logi "Removed module-owned Pixel System Update Intent Firewall rule"
+    return 0
+  fi
+  logi "WARNING: Could not remove module-owned Intent Firewall rule: $IFW_RULE"
+  return 1
+}
+
 # A component is safe to change only when its state can be read from the
 # primary-user package dump.  Unknown state is deliberately skipped.
 component_state(){
@@ -158,6 +236,18 @@ component_state(){
 record_applied(){
   entry="$1|$2"
   grep -Fqx "$entry" "$APPLIED_LIST" 2>/dev/null || echo "$entry" >> "$APPLIED_LIST"
+}
+
+drop_applied_record(){
+  entry="$1|$2"
+  [ -f "$APPLIED_LIST" ] || return 0
+  pending="$STATE_DIR/applied_v4.drop.$$"
+  grep -Fvx "$entry" "$APPLIED_LIST" > "$pending" 2>/dev/null || true
+  if [ -s "$pending" ]; then
+    mv "$pending" "$APPLIED_LIST"
+  else
+    rm -f "$pending" "$APPLIED_LIST"
+  fi
 }
 
 disable_component_safely(){
@@ -199,7 +289,6 @@ google_pixel_components(){
   printf '%s\n' \
     'com.google.android.gms/.update.SystemUpdateService' \
     'com.google.android.gms/.update.SystemUpdateService$ActiveReceiver' \
-    'com.google.android.gms/.update.SystemUpdateActivity' \
     'com.google.android.gms/.update.SystemUpdateGcmTaskService' \
     'com.google.android.gms/.update.SystemUpdatePersistentListenerService' \
     'com.google.android.gms/.update.SystemUpdateService$Receiver' \
@@ -236,18 +325,40 @@ is_safe_system_update_activity(){
 block_resolved_system_update_activity(){
   quiet="${1:-false}"
   activity="$(resolve_system_update_activity)"
-  [ -n "$activity" ] || { [ "$quiet" = true ] || logi "No handler resolved for android.settings.SYSTEM_UPDATE_SETTINGS"; return; }
-  if is_safe_system_update_activity "$activity"; then
-    [ "$quiet" = true ] || logi "Resolved system-update activity: $activity"
-    disable_component_safely "$activity" "$quiet"
+  [ -n "$activity" ] || { [ "$quiet" = true ] || logi "No handler resolved for $IFW_ACTION"; return; }
+  if [ "$activity" = "$IFW_COMPONENT" ]; then
+    [ "$quiet" = true ] || logi "Resolved system-update activity is protected by the Intent Firewall rule: $activity"
+  elif is_safe_system_update_activity "$activity"; then
+    [ "$quiet" = true ] || logi "Resolved allowlisted system-update activity differs from the fixed direct-component rule; action rule still protects manual launch: $activity"
   else
     [ "$quiet" = true ] || logi "WARNING: Resolved update activity is not in the narrow allowlist; skipped: $activity"
+  fi
+}
+
+# Older releases disabled the manual activity itself. Once the exact firewall
+# rule is installed, release only a component recorded as module-owned so the
+# user gets a deterministic denied launch instead of a hidden Settings entry.
+release_module_owned_manual_update_activity(){
+  entry="component|$IFW_COMPONENT"
+  grep -Fqx "$entry" "$APPLIED_LIST" 2>/dev/null || return 0
+  [ -f "$DRYRUN_FILE" ] && { logi "[DRYRUN] Would release module-owned manual System Update activity to Intent Firewall"; return 0; }
+  if ! component_exists "$IFW_COMPONENT"; then
+    drop_applied_record component "$IFW_COMPONENT"
+    logi "Manual System Update activity no longer present; dropped legacy restore record"
+  elif pm enable --user 0 "$IFW_COMPONENT" >/dev/null 2>&1; then
+    drop_applied_record component "$IFW_COMPONENT"
+    logi "Released module-owned manual System Update activity to Intent Firewall"
+  else
+    logi "WARNING: Could not release module-owned manual System Update activity"
   fi
 }
 
 block_google_pixel(){
   quiet="${1:-false}"
   [ "$quiet" = true ] || logi "Applying safe Google Pixel OTA rule set"
+  if install_pixel_manual_update_rule "$quiet"; then
+    release_module_owned_manual_update_activity
+  fi
   for c in $(google_pixel_components); do
     disable_component_safely "$c" "$quiet"
   done
@@ -308,6 +419,9 @@ health_check(){
   clear_component_dump_cache
   detect_device
   if [ "$VENDOR" = "google" ]; then
+    state="$(ifw_rule_state)"
+    echo "Pixel System Update Intent Firewall rule: $state"
+    logi "Health Pixel System Update Intent Firewall rule: $state"
     for c in $(google_pixel_components); do
       if component_exists "$c"; then
         state="$(component_state "$c")"
@@ -402,6 +516,7 @@ status_report(){
 block_all(){
   quiet="${1:-false}"
   [ -f "$DISABLE_FILE" ] && {
+    remove_pixel_manual_update_rule || true
     [ "$quiet" = true ] || { logi "Paused: $DISABLE_FILE exists"; write_json_report; }
     return 0
   }
@@ -433,6 +548,7 @@ apply_boot_rules(){
 }
 
 restore_all(){
+  remove_pixel_manual_update_rule || true
   pending="$STATE_DIR/applied_v4.pending.$$"
   [ -f "$APPLIED_LIST" ] || { logi "No module-owned changes to restore"; write_json_report; return 0; }
   : > "$pending" || { logi "WARNING: Cannot create restore state file"; return 1; }

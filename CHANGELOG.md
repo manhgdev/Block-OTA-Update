@@ -1,9 +1,15 @@
 # Changelog
 
+## v7.1
+- Added one Android Intent Firewall rule for the exact manual Pixel System Update action and its resolved Google Play services activity. Pressing **System update** is denied before that activity can fetch or start an OTA flow.
+- The rule is owned by the module, installed only after boot, written atomically with `system:system` ownership, and never replaces or removes a foreign Intent Firewall rule.
+- `blockota restore`, normal uninstall, and the paused runtime path remove only that module-owned rule. Recovery instructions now include the exact rule path when using the module `disable` marker.
+- Kept the narrow component allowlist as a secondary background-OTA safeguard, but releases the legacy module-owned manual activity disable after the firewall rule is active so the user receives a denied launch instead of a hidden item. No broad Google Play services, Settings, network, update-service, or data changes were added.
+
 ## v7
 - Fixed Pixel component enforcement: Android component targets now use `pm disable --user 0`, which produces an actual disabled component state on Pixel 7 Android 13.
 - Replaced the in-memory GMS package-dump cache, which exceeded Android's shell argument limit, with small per-process dump files read by `grep` and `awk`.
-- Verified on a connected Pixel 7 Android 13: the resolved `com.google.android.gms/.update.SystemUpdateActivity` is disabled and the standard System Update intent no longer resolves.
+- Verified on a connected Pixel 7 Android 13 that the resolved `com.google.android.gms/.update.SystemUpdateActivity` enters the disabled component state.
 
 ## v6
 - Added narrow, explicit Pixel OTA components that handle persistent update listening, OTA suggestions, and update popups; unavailable components are skipped.

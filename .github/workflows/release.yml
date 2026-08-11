@@ -75,6 +75,14 @@ jobs:
             echo "Large package dumps must not be stored in shell variables"
             exit 1
           fi
+          ruby -rrexml/document -e '
+            doc = REXML::Document.new(File.read("ifw/block_ota_update.xml"))
+            actions = REXML::XPath.match(doc, "//activity/intent-filter/action").map { |n| n.attributes["name"] }
+            components = REXML::XPath.match(doc, "//activity/component-filter").map { |n| n.attributes["name"] }
+            abort("IFW rule must contain exactly the manual System Update action") unless actions == ["android.settings.SYSTEM_UPDATE_SETTINGS"]
+            abort("IFW rule must contain exactly the Pixel System Update component") unless components == ["com.google.android.gms/.update.SystemUpdateActivity"]
+            abort("IFW rule must block the activity") unless REXML::XPath.first(doc, "//activity").attributes["block"] == "true"
+          '
 
       - name: Build module ZIP
         shell: bash

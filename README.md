@@ -15,6 +15,11 @@ components for user 0, and disables com.google.android.systemupdate only when
 that package is installed. It does not disable Google Play services, Settings,
 update_engine, or unrelated system packages.
 
+On the tested Pixel 7 Android 13, the same owned rule also rejects only the two
+observed OTA service actions: `com.google.android.gms.update.INSTALL_UPDATE`
+and `com.google.android.gms.update.RESUME_ON_REBOOOT_LSKF_CAPTURED`. It does not
+block the shared `GmsIntentOperationService` component itself.
+
 ## Pixel behavior
 
 On every Google Pixel, the module runs its safe OTA rule set after boot. Its

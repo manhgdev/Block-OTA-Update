@@ -4,8 +4,19 @@
   <activity block="true" log="false">
     <intent-filter>
       <action name="android.settings.SYSTEM_UPDATE_SETTINGS" />
+      <action name="android.settings.SYSTEM_UPDATE_COMPLETE" />
     </intent-filter>
     <component-filter name="com.google.android.gms/.update.SystemUpdateActivity" />
     <component-filter name="com.google.android.gms/.update.phone.PopupDialog" />
   </activity>
+  <service block="true" log="false">
+    <intent-filter>
+      <action name="com.google.android.gms.update.INSTALL_UPDATE" />
+    </intent-filter>
+  </service>
+  <service block="true" log="false">
+    <intent-filter>
+      <action name="com.google.android.gms.update.RESUME_ON_REBOOOT_LSKF_CAPTURED" />
+    </intent-filter>
+  </service>
 </rules>

@@ -79,13 +79,24 @@ jobs:
             doc = REXML::Document.new(File.read("ifw/block_ota_update.xml"))
             actions = REXML::XPath.match(doc, "//activity/intent-filter/action").map { |n| n.attributes["name"] }
             components = REXML::XPath.match(doc, "//activity/component-filter").map { |n| n.attributes["name"] }
-            abort("IFW rule must contain exactly the manual System Update action") unless actions == ["android.settings.SYSTEM_UPDATE_SETTINGS"]
+            expected_activity_actions = [
+              "android.settings.SYSTEM_UPDATE_SETTINGS",
+              "android.settings.SYSTEM_UPDATE_COMPLETE"
+            ]
+            abort("IFW rule must contain exactly the manual System Update and OTA popup actions") unless actions == expected_activity_actions
             expected_components = [
               "com.google.android.gms/.update.SystemUpdateActivity",
               "com.google.android.gms/.update.phone.PopupDialog"
             ]
+            service_actions = REXML::XPath.match(doc, "//service/intent-filter/action").map { |n| n.attributes["name"] }
+            expected_service_actions = [
+              "com.google.android.gms.update.INSTALL_UPDATE",
+              "com.google.android.gms.update.RESUME_ON_REBOOOT_LSKF_CAPTURED"
+            ]
             abort("IFW rule must contain exactly the Pixel System Update activity and OTA popup") unless components == expected_components
+            abort("IFW rule must contain exactly the observed Pixel OTA service actions") unless service_actions == expected_service_actions
             abort("IFW rule must block the activity") unless REXML::XPath.first(doc, "//activity").attributes["block"] == "true"
+            abort("Every IFW service rule must block") unless REXML::XPath.match(doc, "//service").all? { |n| n.attributes["block"] == "true" }
           '
 
       - name: Build module ZIP

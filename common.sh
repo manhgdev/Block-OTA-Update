@@ -99,12 +99,51 @@ component_full_name(){
   esac
 }
 
+# Each Pixel enforcement pass touches several components in the same two
+# packages. Keep one Package Manager dump per package for that pass so the
+# background re-check remains light and does not repeatedly query GMS.
+clear_component_dump_cache(){
+  unset GMS_DUMP_CACHE GMS_DUMP_STATUS GMS_DUMP_READY
+  unset GSF_DUMP_CACHE GSF_DUMP_STATUS GSF_DUMP_READY
+  unset COMPONENT_DUMP COMPONENT_DUMP_STATUS
+}
+
+load_component_package_dump(){
+  p="$1"
+  case "$p" in
+    com.google.android.gms)
+      if [ "${GMS_DUMP_READY:-false}" != true ]; then
+        GMS_DUMP_CACHE="$(dumpsys package "$p" 2>/dev/null)"
+        GMS_DUMP_STATUS=$?
+        GMS_DUMP_READY=true
+      fi
+      COMPONENT_DUMP="$GMS_DUMP_CACHE"
+      COMPONENT_DUMP_STATUS="$GMS_DUMP_STATUS"
+      ;;
+    com.google.android.gsf)
+      if [ "${GSF_DUMP_READY:-false}" != true ]; then
+        GSF_DUMP_CACHE="$(dumpsys package "$p" 2>/dev/null)"
+        GSF_DUMP_STATUS=$?
+        GSF_DUMP_READY=true
+      fi
+      COMPONENT_DUMP="$GSF_DUMP_CACHE"
+      COMPONENT_DUMP_STATUS="$GSF_DUMP_STATUS"
+      ;;
+    *)
+      COMPONENT_DUMP="$(dumpsys package "$p" 2>/dev/null)"
+      COMPONENT_DUMP_STATUS=$?
+      ;;
+  esac
+  [ "$COMPONENT_DUMP_STATUS" -eq 0 ]
+}
+
 component_exists(){
   c="$1"
   p="$(component_package "$c")"
   full="$(component_full_name "$c")"
   pkg_exists "$p" || return 1
-  dumpsys package "$p" 2>/dev/null | grep -Fq "$full"
+  load_component_package_dump "$p" || return 1
+  printf '%s\n' "$COMPONENT_DUMP" | grep -Fq "$full"
 }
 
 # A component is safe to change only when its state can be read from the
@@ -113,7 +152,8 @@ component_state(){
   c="$1"
   p="$(component_package "$c")"
   full="$(component_full_name "$c")"
-  dump="$(dumpsys package "$p" 2>/dev/null)" || { echo "unknown"; return; }
+  load_component_package_dump "$p" || { echo "unknown"; return; }
+  dump="$COMPONENT_DUMP"
   echo "$dump" | grep -q '^[[:space:]]*User 0:' || { echo "unknown"; return; }
   echo "$dump" | awk -v target="$full" '
     $1 == "User" && $2 == "0:" { in_user=1; section=""; next }
@@ -134,13 +174,14 @@ record_applied(){
 disable_component_safely(){
   c="$1"
   p="$(component_package "$c")"
-  [ -f "$DRYRUN_FILE" ] && { logi "[DRYRUN] Would disable component user=0: $c"; return; }
-  is_user_whitelisted "$p" && { logi "Skip whitelisted component package: $p"; return; }
-  component_exists "$c" || { logi "Skip unavailable OTA component: $c"; return; }
+  quiet="${2:-false}"
+  [ -f "$DRYRUN_FILE" ] && { [ "$quiet" = true ] || logi "[DRYRUN] Would disable component user=0: $c"; return; }
+  is_user_whitelisted "$p" && { [ "$quiet" = true ] || logi "Skip whitelisted component package: $p"; return; }
+  component_exists "$c" || { [ "$quiet" = true ] || logi "Skip unavailable OTA component: $c"; return; }
   state="$(component_state "$c")"
   case "$state" in
-    disabled) logi "Component already disabled user=0: $c"; return ;;
-    unknown) logi "WARNING: State unknown; skipped component: $c"; return ;;
+    disabled) [ "$quiet" = true ] || logi "Component already disabled user=0: $c"; return ;;
+    unknown) [ "$quiet" = true ] || logi "WARNING: State unknown; skipped component: $c"; return ;;
   esac
   if pm disable-user --user 0 "$c" >/dev/null 2>&1; then
     record_applied component "$c"
@@ -171,8 +212,17 @@ google_pixel_components(){
     'com.google.android.gms/.update.SystemUpdateService$ActiveReceiver' \
     'com.google.android.gms/.update.SystemUpdateActivity' \
     'com.google.android.gms/.update.SystemUpdateGcmTaskService' \
+    'com.google.android.gms/.update.SystemUpdatePersistentListenerService' \
     'com.google.android.gms/.update.SystemUpdateService$Receiver' \
-    'com.google.android.gms/.update.SystemUpdateService$SecretCodeHandler'
+    'com.google.android.gms/.update.SystemUpdateService$SecretCodeHandler' \
+    'com.google.android.gms/.update.SystemUpdateService$SecretCodeReceiver' \
+    'com.google.android.gms/.update.phone.PopupDialog' \
+    'com.google.android.gms/.update.OtaSuggestionActivity' \
+    'com.google.android.gsf/.update.SystemUpdateActivity' \
+    'com.google.android.gsf/.update.SystemUpdatePanoActivity' \
+    'com.google.android.gsf/.update.SystemUpdateService' \
+    'com.google.android.gsf/.update.SystemUpdateService$Receiver' \
+    'com.google.android.gsf/.update.SystemUpdateService$SecretCodeReceiver'
 }
 
 resolve_system_update_activity(){
@@ -195,22 +245,24 @@ is_safe_system_update_activity(){
 }
 
 block_resolved_system_update_activity(){
+  quiet="${1:-false}"
   activity="$(resolve_system_update_activity)"
-  [ -n "$activity" ] || { logi "No handler resolved for android.settings.SYSTEM_UPDATE_SETTINGS"; return; }
+  [ -n "$activity" ] || { [ "$quiet" = true ] || logi "No handler resolved for android.settings.SYSTEM_UPDATE_SETTINGS"; return; }
   if is_safe_system_update_activity "$activity"; then
-    logi "Resolved system-update activity: $activity"
-    disable_component_safely "$activity"
+    [ "$quiet" = true ] || logi "Resolved system-update activity: $activity"
+    disable_component_safely "$activity" "$quiet"
   else
-    logi "WARNING: Resolved update activity is not in the narrow allowlist; skipped: $activity"
+    [ "$quiet" = true ] || logi "WARNING: Resolved update activity is not in the narrow allowlist; skipped: $activity"
   fi
 }
 
 block_google_pixel(){
-  logi "Applying safe Google Pixel OTA rule set"
+  quiet="${1:-false}"
+  [ "$quiet" = true ] || logi "Applying safe Google Pixel OTA rule set"
   for c in $(google_pixel_components); do
-    disable_component_safely "$c"
+    disable_component_safely "$c" "$quiet"
   done
-  block_resolved_system_update_activity
+  block_resolved_system_update_activity "$quiet"
   # This package is the explicit Pixel system-update UI/provider.  It is
   # changed only when installed and enabled for user 0, and is fully restorable.
   disable_package_safely "com.google.android.systemupdate"
@@ -356,23 +408,32 @@ status_report(){
 }
 
 block_all(){
-  [ -f "$DISABLE_FILE" ] && { logi "Paused: $DISABLE_FILE exists"; write_json_report; return 0; }
+  quiet="${1:-false}"
+  [ -f "$DISABLE_FILE" ] && {
+    [ "$quiet" = true ] || { logi "Paused: $DISABLE_FILE exists"; write_json_report; }
+    return 0
+  }
   detect_device
-  logi "Applying safe OTA rules for vendor=$VENDOR model=$MODEL android=$RELEASE sdk=$SDK"
+  [ "$quiet" = true ] || logi "Applying safe OTA rules for vendor=$VENDOR model=$MODEL android=$RELEASE sdk=$SDK"
   if [ "$VENDOR" = "google" ]; then
-    block_google_pixel
+    clear_component_dump_cache
+    block_google_pixel "$quiet"
   else
     block_vendor_packages
   fi
-  health_check >/dev/null
-  write_json_report
-  logi "Safe OTA block cycle complete"
+  if [ "$quiet" != true ]; then
+    clear_component_dump_cache
+    health_check >/dev/null
+  fi
+  [ "$quiet" = true ] || write_json_report
+  [ "$quiet" = true ] || logi "Safe OTA block cycle complete"
 }
 
 apply_boot_rules(){
+  quiet="${1:-false}"
   detect_device
   if [ "$VENDOR" = "google" ]; then
-    block_all
+    block_all "$quiet"
   else
     logi "Boot auto-block skipped for vendor=$VENDOR; use blockota block explicitly"
     write_json_report
@@ -381,7 +442,7 @@ apply_boot_rules(){
 
 restore_all(){
   pending="$STATE_DIR/applied_v4.pending.$$"
-  [ -f "$APPLIED_LIST" ] || { logi "No v4 module-owned changes to restore"; write_json_report; return 0; }
+  [ -f "$APPLIED_LIST" ] || { logi "No module-owned changes to restore"; write_json_report; return 0; }
   : > "$pending" || { logi "WARNING: Cannot create restore state file"; return 1; }
   while IFS='|' read -r kind target; do
     [ -n "$kind" ] || continue

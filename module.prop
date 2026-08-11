@@ -1,7 +1,7 @@
 id=block_ota_update
 name=Block OTA Update Safe Pixel
-version=v5
-versionCode=5
+version=v6
+versionCode=6
 author=manhgdev
-description=Safe OTA blocker: explicit Pixel GMS components and user-0 system update package only.
+description=Safe OTA blocker: narrow Pixel OTA components, rechecked after boot, with reversible user-0 changes.
 updateJson=https://raw.githubusercontent.com/manhgdev/Block-OTA-Update/main/update.json

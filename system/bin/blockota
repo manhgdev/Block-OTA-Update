@@ -3,8 +3,8 @@ MODDIR="/data/adb/modules/block_ota_update"
 . "$MODDIR/common.sh"
 case "$1" in
   status|"") status_report;;
-  block) rm -f "$DISABLE_FILE"; block_all; echo "Block applied.";;
-  restore|enable) restore_all; echo "Restore applied.";;
+  block|enforce) rm -f "$DISABLE_FILE"; block_all; echo "Safe OTA block applied.";;
+  restore|enable) touch "$DISABLE_FILE"; restore_all; echo "Restored and paused. Run blockota resume to block again.";;
   pause|disable) touch "$DISABLE_FILE"; echo "Paused.";;
   resume) rm -f "$DISABLE_FILE"; block_all; echo "Resumed.";;
   smart-block-on) touch "$SMART_BLOCK_FILE"; scan_smart >/dev/null; block_smart_targets; echo "Smart block applied. Review the log before rebooting.";;
@@ -19,5 +19,5 @@ case "$1" in
   report) write_html_report;;
   github-help) github_help;;
   log) tail -n 120 "$LOG" 2>/dev/null;;
-  *) echo "Usage: blockota {status|block|restore|pause|resume|smart-block-on|smart-block-off|dryrun-on|dryrun-off|scan|scan-smart|resolve|health|json|report|github-help|log}";;
+  *) echo "Usage: blockota {status|block|enforce|restore|pause|resume|smart-block-on|smart-block-off|dryrun-on|dryrun-off|scan|scan-smart|resolve|health|json|report|github-help|log}";;
 esac

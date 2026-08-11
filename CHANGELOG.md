@@ -1,5 +1,11 @@
 # Changelog
 
+## v6
+- Added narrow, explicit Pixel OTA components that handle persistent update listening, OTA suggestions, and update popups; unavailable components are skipped.
+- Added legacy Google Services Framework OTA components when present, still as user-0 component-only changes.
+- Re-checks only that fixed allowlist every five minutes after boot so a Google Play services update cannot silently re-enable an OTA entry point.
+- Added `blockota enforce` for an immediate safe enforcement pass from a booted rooted Android session. Module installation itself still requires a reboot before Package Manager changes are made.
+
 ## v5
 - Resolve Android's SYSTEM_UPDATE_SETTINGS action at boot and disable its handler only when it is a dedicated, allowlisted SystemUpdate component.
 - Added blockota resolve and health reporting for the resolved system-update activity.

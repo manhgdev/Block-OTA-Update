@@ -22,6 +22,7 @@ IFW_SOURCE="$MODDIR/ifw/block_ota_update.xml"
 IFW_RULE_OWNER="Block OTA Update: module-owned manual System Update rule"
 IFW_ACTION="android.settings.SYSTEM_UPDATE_SETTINGS"
 IFW_COMPONENT="com.google.android.gms/.update.SystemUpdateActivity"
+IFW_POPUP_COMPONENT="com.google.android.gms/.update.phone.PopupDialog"
 
 mkdir -p "$STATE_DIR" "$TOGGLE_DIR" 2>/dev/null
 [ -f "$USER_WHITELIST" ] || cat > "$USER_WHITELIST" <<EOF
@@ -153,7 +154,8 @@ ifw_source_is_safe(){
   [ -f "$IFW_SOURCE" ] &&
     grep -Fq "$IFW_RULE_OWNER" "$IFW_SOURCE" 2>/dev/null &&
     grep -Fq "<action name=\"$IFW_ACTION\" />" "$IFW_SOURCE" 2>/dev/null &&
-    grep -Fq "<component-filter name=\"$IFW_COMPONENT\" />" "$IFW_SOURCE" 2>/dev/null
+    grep -Fq "<component-filter name=\"$IFW_COMPONENT\" />" "$IFW_SOURCE" 2>/dev/null &&
+    grep -Fq "<component-filter name=\"$IFW_POPUP_COMPONENT\" />" "$IFW_SOURCE" 2>/dev/null
 }
 
 ifw_rule_state(){

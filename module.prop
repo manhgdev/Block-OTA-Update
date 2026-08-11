@@ -1,7 +1,7 @@
 id=block_ota_update
 name=Block OTA Update Safe Pixel
-version=v7.1
-versionCode=71
+version=v7.2
+versionCode=72
 author=manhgdev
-description=Safe OTA blocker: exact Pixel System Update intent denial plus reversible user-0 OTA component changes.
+description=Safe OTA blocker: exact Pixel System Update and OTA popup denial plus reversible user-0 component changes.
 updateJson=https://raw.githubusercontent.com/manhgdev/Block-OTA-Update/main/update.json

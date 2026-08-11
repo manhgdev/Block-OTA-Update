@@ -80,7 +80,11 @@ jobs:
             actions = REXML::XPath.match(doc, "//activity/intent-filter/action").map { |n| n.attributes["name"] }
             components = REXML::XPath.match(doc, "//activity/component-filter").map { |n| n.attributes["name"] }
             abort("IFW rule must contain exactly the manual System Update action") unless actions == ["android.settings.SYSTEM_UPDATE_SETTINGS"]
-            abort("IFW rule must contain exactly the Pixel System Update component") unless components == ["com.google.android.gms/.update.SystemUpdateActivity"]
+            expected_components = [
+              "com.google.android.gms/.update.SystemUpdateActivity",
+              "com.google.android.gms/.update.phone.PopupDialog"
+            ]
+            abort("IFW rule must contain exactly the Pixel System Update activity and OTA popup") unless components == expected_components
             abort("IFW rule must block the activity") unless REXML::XPath.first(doc, "//activity").attributes["block"] == "true"
           '
 

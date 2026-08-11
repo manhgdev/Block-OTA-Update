@@ -1,5 +1,10 @@
 # Changelog
 
+## v7.2
+- Added the exact Pixel OTA nag component `com.google.android.gms/.update.phone.PopupDialog` to the module-owned Intent Firewall rule. This blocks the full-screen **Download and install now** popup shown over the launcher even when Package Manager does not expose that component for `pm disable`.
+- Kept the existing manual System Update action/activity block and narrow background component safeguards unchanged.
+- The v7.1 ownership marker is preserved so upgrades atomically replace the existing module rule; restore and uninstall still remove only that one owned XML file.
+
 ## v7.1
 - Added one Android Intent Firewall rule for the exact manual Pixel System Update action and its resolved Google Play services activity. Pressing **System update** is denied before that activity can fetch or start an OTA flow.
 - The rule is owned by the module, installed only after boot, written atomically with `system:system` ownership, and never replaces or removes a foreign Intent Firewall rule.

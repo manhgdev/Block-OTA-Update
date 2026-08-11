@@ -6,5 +6,6 @@
       <action name="android.settings.SYSTEM_UPDATE_SETTINGS" />
     </intent-filter>
     <component-filter name="com.google.android.gms/.update.SystemUpdateActivity" />
+    <component-filter name="com.google.android.gms/.update.phone.PopupDialog" />
   </activity>
 </rules>

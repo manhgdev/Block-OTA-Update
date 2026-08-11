@@ -2,12 +2,13 @@
 
 Safe Android OTA blocker for Magisk, KernelSU, and APatch.
 
-Version 7.1 uses a narrow Google Pixel rule set. After Android finishes booting,
+Version 7.2 uses a narrow Google Pixel rule set. After Android finishes booting,
 it installs one Android Intent Firewall rule for the exact **System update**
-action and its known Pixel handler. Pressing **System update** is denied before
-that activity can load or start an OTA flow. The Settings item may remain
-visible; this is intentional, because hiding a Settings page is not proof that
-OTA is blocked.
+action, its known Pixel handler, and the dedicated Pixel OTA popup activity.
+Pressing **System update** is denied before that activity can load or start an
+OTA flow, and the full-screen **Download and install now** nag cannot launch.
+The Settings item may remain visible; this is intentional, because hiding a
+Settings page is not proof that OTA is blocked.
 
 The module also disables only declared background Google Play services OTA
 components for user 0, and disables com.google.android.systemupdate only when
@@ -18,9 +19,11 @@ update_engine, or unrelated system packages.
 
 On every Google Pixel, the module runs its safe OTA rule set after boot. Its
 manual-flow rule is limited to `android.settings.SYSTEM_UPDATE_SETTINGS` and
-`com.google.android.gms/.update.SystemUpdateActivity`. The Android framework
-denies that activity launch, so selecting **System update** shows an error or
-does not open the update page; it does not pretend that a new update is absent.
+the two exact activities `com.google.android.gms/.update.SystemUpdateActivity`
+and `com.google.android.gms/.update.phone.PopupDialog`. The Android framework
+denies those activity launches, so selecting **System update** shows an error or
+does not open the update page, and the OTA nag cannot appear over the launcher.
+It does not pretend that a new update is absent.
 
 The module keeps the known GMS/GSF background system-update components and the
 installed system-update package as narrow background-flow safeguards. If an
@@ -34,7 +37,7 @@ Settings component is logged and skipped.
 Missing components are skipped and written to the log. The module never guesses
 or disables a package merely because its name contains "update".
 
-Google Play services may update itself after boot. v7.1 therefore re-checks only
+Google Play services may update itself after boot. v7.2 therefore re-checks only
 the explicit Pixel OTA component allowlist every five minutes. Already-disabled
 or absent targets produce no recurring log noise. It does not scan packages or
 disable GMS, Settings, update_engine, or network access.
@@ -111,10 +114,10 @@ is `major * 10 + minor`, so v7.1 is 71, v7.9 is 79, and v8.0 is 80.
 
 ~~~sh
 git add .
-git commit -m "Release v7.1"
+git commit -m "Release v7.2"
 git push origin main
-git tag v7.1
-git push origin v7.1
+git tag v7.2
+git push origin v7.2
 ~~~
 
 Pushing the tag starts the GitHub Release workflow. It validates the metadata,

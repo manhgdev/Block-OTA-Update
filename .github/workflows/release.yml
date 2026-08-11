@@ -65,6 +65,14 @@ jobs:
             echo "Generic GMS component must not be targeted"
             exit 1
           fi
+          if ! grep -Fq 'pm disable --user 0 "$c"' common.sh; then
+            echo "Pixel components must use component-level disable for user 0"
+            exit 1
+          fi
+          if grep -Fq 'COMPONENT_DUMP=' common.sh; then
+            echo "Large package dumps must not be stored in shell variables"
+            exit 1
+          fi
 
       - name: Build module ZIP
         shell: bash

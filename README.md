@@ -2,7 +2,7 @@
 
 Safe Android OTA blocker for Magisk, KernelSU, and APatch.
 
-Version 6 uses a narrow Google Pixel rule set: it runs after Android finishes
+Version 7 uses a narrow Google Pixel rule set: it runs after Android finishes
 booting, disables only declared Google Play services OTA components for user 0,
 and disables com.google.android.systemupdate only when that package is installed.
 It does not disable Google Play services, Settings, update_engine, or unrelated
@@ -21,7 +21,7 @@ Settings component is logged and skipped.
 Missing components are skipped and written to the log. The module never guesses
 or disables a package merely because its name contains "update".
 
-Google Play services may update itself after boot. v6 therefore re-checks only
+Google Play services may update itself after boot. v7 therefore re-checks only
 the explicit Pixel OTA component allowlist every five minutes. Already-disabled
 or absent targets produce no recurring log noise. It does not scan packages or
 disable GMS, Settings, update_engine, or network access.
@@ -80,15 +80,15 @@ Remove that marker after recovery to enable the module again.
 
 ## GitHub release
 
-The source version and tag must match exactly. For v6, module.prop and
-update.json both use version v6 and versionCode 6.
+The source version and tag must match exactly. For v7, module.prop and
+update.json both use version v7 and versionCode 7.
 
 ~~~sh
 git add .
-git commit -m "Release v6"
+git commit -m "Release v7"
 git push origin main
-git tag v6
-git push origin v6
+git tag v7
+git push origin v7
 ~~~
 
 Pushing the tag starts the GitHub Release workflow. It validates the metadata,

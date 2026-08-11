@@ -1,5 +1,10 @@
 # Changelog
 
+## v7
+- Fixed Pixel component enforcement: Android component targets now use `pm disable --user 0`, which produces an actual disabled component state on Pixel 7 Android 13.
+- Replaced the in-memory GMS package-dump cache, which exceeded Android's shell argument limit, with small per-process dump files read by `grep` and `awk`.
+- Verified on a connected Pixel 7 Android 13: the resolved `com.google.android.gms/.update.SystemUpdateActivity` is disabled and the standard System Update intent no longer resolves.
+
 ## v6
 - Added narrow, explicit Pixel OTA components that handle persistent update listening, OTA suggestions, and update popups; unavailable components are skipped.
 - Added legacy Google Services Framework OTA components when present, still as user-0 component-only changes.

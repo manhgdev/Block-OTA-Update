@@ -99,42 +99,32 @@ component_full_name(){
   esac
 }
 
-# Each Pixel enforcement pass touches several components in the same two
-# packages. Keep one Package Manager dump per package for that pass so the
-# background re-check remains light and does not repeatedly query GMS.
+# Each Pixel enforcement pass touches several components in the same packages.
+# Keep a per-process dump file instead of passing the large GMS dump through a
+# shell argument: Android's /system/bin/printf has a small argument limit.
 clear_component_dump_cache(){
-  unset GMS_DUMP_CACHE GMS_DUMP_STATUS GMS_DUMP_READY
-  unset GSF_DUMP_CACHE GSF_DUMP_STATUS GSF_DUMP_READY
-  unset COMPONENT_DUMP COMPONENT_DUMP_STATUS
+  rm -f \
+    "$STATE_DIR/.block_ota_gms_dump.$$" \
+    "$STATE_DIR/.block_ota_gsf_dump.$$" \
+    "$STATE_DIR/.block_ota_settings_dump.$$" \
+    "$STATE_DIR/.block_ota_systemupdate_dump.$$"
+  unset COMPONENT_DUMP_FILE
 }
 
 load_component_package_dump(){
   p="$1"
   case "$p" in
-    com.google.android.gms)
-      if [ "${GMS_DUMP_READY:-false}" != true ]; then
-        GMS_DUMP_CACHE="$(dumpsys package "$p" 2>/dev/null)"
-        GMS_DUMP_STATUS=$?
-        GMS_DUMP_READY=true
-      fi
-      COMPONENT_DUMP="$GMS_DUMP_CACHE"
-      COMPONENT_DUMP_STATUS="$GMS_DUMP_STATUS"
-      ;;
-    com.google.android.gsf)
-      if [ "${GSF_DUMP_READY:-false}" != true ]; then
-        GSF_DUMP_CACHE="$(dumpsys package "$p" 2>/dev/null)"
-        GSF_DUMP_STATUS=$?
-        GSF_DUMP_READY=true
-      fi
-      COMPONENT_DUMP="$GSF_DUMP_CACHE"
-      COMPONENT_DUMP_STATUS="$GSF_DUMP_STATUS"
-      ;;
-    *)
-      COMPONENT_DUMP="$(dumpsys package "$p" 2>/dev/null)"
-      COMPONENT_DUMP_STATUS=$?
-      ;;
+    com.google.android.gms) dump_file="$STATE_DIR/.block_ota_gms_dump.$$" ;;
+    com.google.android.gsf) dump_file="$STATE_DIR/.block_ota_gsf_dump.$$" ;;
+    com.android.settings) dump_file="$STATE_DIR/.block_ota_settings_dump.$$" ;;
+    com.google.android.systemupdate) dump_file="$STATE_DIR/.block_ota_systemupdate_dump.$$" ;;
+    *) return 1 ;;
   esac
-  [ "$COMPONENT_DUMP_STATUS" -eq 0 ]
+  if [ ! -f "$dump_file" ]; then
+    dumpsys package "$p" > "$dump_file" 2>/dev/null || return 1
+  fi
+  [ -s "$dump_file" ] || return 1
+  COMPONENT_DUMP_FILE="$dump_file"
 }
 
 component_exists(){
@@ -143,7 +133,7 @@ component_exists(){
   full="$(component_full_name "$c")"
   pkg_exists "$p" || return 1
   load_component_package_dump "$p" || return 1
-  printf '%s\n' "$COMPONENT_DUMP" | grep -Fq "$full"
+  grep -Fq "$full" "$COMPONENT_DUMP_FILE"
 }
 
 # A component is safe to change only when its state can be read from the
@@ -153,9 +143,8 @@ component_state(){
   p="$(component_package "$c")"
   full="$(component_full_name "$c")"
   load_component_package_dump "$p" || { echo "unknown"; return; }
-  dump="$COMPONENT_DUMP"
-  echo "$dump" | grep -q '^[[:space:]]*User 0:' || { echo "unknown"; return; }
-  echo "$dump" | awk -v target="$full" '
+  grep -q '^[[:space:]]*User 0:' "$COMPONENT_DUMP_FILE" || { echo "unknown"; return; }
+  awk -v target="$full" '
     $1 == "User" && $2 == "0:" { in_user=1; section=""; next }
     $1 == "User" && $2 ~ /^[0-9]+:$/ && in_user { exit }
     !in_user { next }
@@ -163,7 +152,7 @@ component_state(){
     $0 ~ /^[[:space:]]*enabledComponents:/ { section="enabled"; next }
     section == "disabled" && index($0, target) > 0 { found=1; exit }
     END { if (found) print "disabled"; else print "enabled" }
-  '
+  ' "$COMPONENT_DUMP_FILE"
 }
 
 record_applied(){
@@ -183,7 +172,7 @@ disable_component_safely(){
     disabled) [ "$quiet" = true ] || logi "Component already disabled user=0: $c"; return ;;
     unknown) [ "$quiet" = true ] || logi "WARNING: State unknown; skipped component: $c"; return ;;
   esac
-  if pm disable-user --user 0 "$c" >/dev/null 2>&1; then
+  if pm disable --user 0 "$c" >/dev/null 2>&1; then
     record_applied component "$c"
     logi "Disabled OTA component user=0: $c"
   else
@@ -316,6 +305,7 @@ block_smart_targets(){
 }
 
 health_check(){
+  clear_component_dump_cache
   detect_device
   if [ "$VENDOR" = "google" ]; then
     for c in $(google_pixel_components); do
@@ -351,6 +341,7 @@ health_check(){
       logi "Health package $p: $state"
     done
   fi
+  clear_component_dump_cache
 }
 
 write_json_report(){

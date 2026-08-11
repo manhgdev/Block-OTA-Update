@@ -75,6 +75,13 @@ jobs:
             echo "Large package dumps must not be stored in shell variables"
             exit 1
           fi
+          if grep -En 'rm[[:space:]]+-rf|find.*-delete' common.sh service.sh post-fs-data.sh system/bin/blockota; then
+            echo "Broad or recursive deletion found"
+            exit 1
+          fi
+          grep -Fq 'OTA_METADATA_FILE="/data/ota_package/metadata.pb"' common.sh
+          grep -Fq 'OTA_PAYLOAD_METADATA_FILE="/data/ota_package/payload_metadata.bin"' common.sh
+          grep -Fq '"$OTA_METADATA_FILE"|"$OTA_PAYLOAD_METADATA_FILE"' common.sh
           ruby -rrexml/document -e '
             doc = REXML::Document.new(File.read("ifw/block_ota_update.xml"))
             actions = REXML::XPath.match(doc, "//activity/intent-filter/action").map { |n| n.attributes["name"] }

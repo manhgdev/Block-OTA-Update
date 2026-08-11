@@ -26,6 +26,9 @@ IFW_COMPONENT="com.google.android.gms/.update.SystemUpdateActivity"
 IFW_POPUP_COMPONENT="com.google.android.gms/.update.phone.PopupDialog"
 IFW_INSTALL_ACTION="com.google.android.gms.update.INSTALL_UPDATE"
 IFW_RESUME_ACTION="com.google.android.gms.update.RESUME_ON_REBOOOT_LSKF_CAPTURED"
+OTA_METADATA_FILE="/data/ota_package/metadata.pb"
+OTA_PAYLOAD_METADATA_FILE="/data/ota_package/payload_metadata.bin"
+OTA_SNAPSHOT_DIR="/metadata/ota/snapshots"
 
 mkdir -p "$STATE_DIR" "$TOGGLE_DIR" 2>/dev/null
 [ -f "$USER_WHITELIST" ] || cat > "$USER_WHITELIST" <<EOF
@@ -222,6 +225,41 @@ remove_pixel_manual_update_rule(){
   return 1
 }
 
+pixel_ota_cleanup_is_safe(){
+  [ -d "$OTA_SNAPSHOT_DIR" ] || return 0
+  snapshot_entry="$(find "$OTA_SNAPSHOT_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)"
+  [ -z "$snapshot_entry" ]
+}
+
+remove_exact_ota_metadata_file(){
+  target="$1"
+  case "$target" in
+    "$OTA_METADATA_FILE"|"$OTA_PAYLOAD_METADATA_FILE") ;;
+    *) logi "WARNING: Refusing unexpected OTA cleanup target: $target"; return 1 ;;
+  esac
+  [ -f "$target" ] || return 0
+  bytes="$(wc -c < "$target" 2>/dev/null | tr -d ' ')"
+  if rm -f "$target"; then
+    logi "Removed stale Pixel OTA metadata: $target bytes=${bytes:-unknown}"
+  else
+    logi "WARNING: Could not remove stale Pixel OTA metadata: $target"
+    return 1
+  fi
+}
+
+cleanup_pixel_ota_metadata(){
+  if [ -f "$DRYRUN_FILE" ]; then
+    logi "[DRYRUN] Would remove exact Pixel OTA metadata files when no OTA snapshot exists"
+    return 0
+  fi
+  if ! pixel_ota_cleanup_is_safe; then
+    logi "WARNING: OTA snapshot exists; skipped Pixel OTA metadata cleanup"
+    return 1
+  fi
+  remove_exact_ota_metadata_file "$OTA_METADATA_FILE"
+  remove_exact_ota_metadata_file "$OTA_PAYLOAD_METADATA_FILE"
+}
+
 # A component is safe to change only when its state can be read from the
 # primary-user package dump.  Unknown state is deliberately skipped.
 component_state(){
@@ -366,6 +404,7 @@ block_google_pixel(){
   [ "$quiet" = true ] || logi "Applying safe Google Pixel OTA rule set"
   if install_pixel_manual_update_rule "$quiet"; then
     release_module_owned_manual_update_activity
+    cleanup_pixel_ota_metadata || true
   fi
   for c in $(google_pixel_components); do
     disable_component_safely "$c" "$quiet"
@@ -430,6 +469,19 @@ health_check(){
     state="$(ifw_rule_state)"
     echo "Pixel System Update Intent Firewall rule: $state"
     logi "Health Pixel System Update Intent Firewall rule: $state"
+    if pixel_ota_cleanup_is_safe; then
+      echo "Pixel OTA snapshot state: clear"
+      logi "Health Pixel OTA snapshot state: clear"
+    else
+      echo "Pixel OTA snapshot state: present (metadata cleanup skipped)"
+      logi "Health Pixel OTA snapshot state: present; metadata cleanup skipped"
+    fi
+    [ -e "$OTA_METADATA_FILE" ] && state="present" || state="absent"
+    echo "Pixel OTA metadata: $state"
+    logi "Health Pixel OTA metadata: $state"
+    [ -e "$OTA_PAYLOAD_METADATA_FILE" ] && state="present" || state="absent"
+    echo "Pixel OTA payload metadata: $state"
+    logi "Health Pixel OTA payload metadata: $state"
     for c in $(google_pixel_components); do
       if component_exists "$c"; then
         state="$(component_state "$c")"

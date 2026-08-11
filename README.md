@@ -2,7 +2,7 @@
 
 Safe Android OTA blocker for Magisk, KernelSU, and APatch.
 
-Version 7.2 uses a narrow Google Pixel rule set. After Android finishes booting,
+Version 7.3 uses a narrow Google Pixel rule set. After Android finishes booting,
 it installs one Android Intent Firewall rule for the exact **System update**
 action, its known Pixel handler, and the dedicated Pixel OTA popup activity.
 Pressing **System update** is denied before that activity can load or start an
@@ -19,6 +19,12 @@ On the tested Pixel 7 Android 13, the same owned rule also rejects only the two
 observed OTA service actions: `com.google.android.gms.update.INSTALL_UPDATE`
 and `com.google.android.gms.update.RESUME_ON_REBOOOT_LSKF_CAPTURED`. It does not
 block the shared `GmsIntentOperationService` component itself.
+
+After its firewall rule is active, v7.3 removes only
+`/data/ota_package/metadata.pb` and
+`/data/ota_package/payload_metadata.bin`. Cleanup is skipped if
+`/metadata/ota/snapshots` contains anything. It never deletes a partition,
+snapshot, update preference, or the rest of Google Play services data.
 
 ## Pixel behavior
 
@@ -42,7 +48,7 @@ Settings component is logged and skipped.
 Missing components are skipped and written to the log. The module never guesses
 or disables a package merely because its name contains "update".
 
-Google Play services may update itself after boot. v7.2 therefore re-checks only
+Google Play services may update itself after boot. v7.3 therefore re-checks only
 the explicit Pixel OTA component allowlist every five minutes. Already-disabled
 or absent targets produce no recurring log noise. It does not scan packages or
 disable GMS, Settings, update_engine, or network access.
@@ -119,10 +125,10 @@ is `major * 10 + minor`, so v7.1 is 71, v7.9 is 79, and v8.0 is 80.
 
 ~~~sh
 git add .
-git commit -m "Release v7.2"
+git commit -m "Release v7.3"
 git push origin main
-git tag v7.2
-git push origin v7.2
+git tag v7.3
+git push origin v7.3
 ~~~
 
 Pushing the tag starts the GitHub Release workflow. It validates the metadata,

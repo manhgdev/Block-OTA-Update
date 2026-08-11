@@ -1,5 +1,10 @@
 # Changelog
 
+## v7.3
+- Removes only `/data/ota_package/metadata.pb` and `/data/ota_package/payload_metadata.bin` after the Pixel IFW rule is active.
+- Skips metadata cleanup whenever `/metadata/ota/snapshots` contains an entry, avoiding changes while Android has an OTA snapshot in progress.
+- Adds health output for OTA snapshot and metadata presence. No update process, partition, snapshot, Google Play services data, or update-engine preferences are stopped or deleted.
+
 ## v7.2
 - Added the exact Pixel OTA nag component `com.google.android.gms/.update.phone.PopupDialog` to the module-owned Intent Firewall rule. This blocks the full-screen **Download and install now** popup shown over the launcher even when Package Manager does not expose that component for `pm disable`.
 - Added its observed `android.settings.SYSTEM_UPDATE_COMPLETE` action as a second exact match for the same activity rule.
